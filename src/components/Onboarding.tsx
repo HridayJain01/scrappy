@@ -1,24 +1,14 @@
-import { useState, type FormEvent } from 'react'
-import { getSetting, setSetting } from '../lib/db.ts'
-import { DEFAULT_MODEL, testKey } from '../lib/gemini.ts'
+import { warmUp } from '../lib/clip.ts'
+import { setSetting } from '../lib/db.ts'
 import { Burst } from './ui.tsx'
 
-export function Onboarding() {
-  const [key, setKey] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
+// Only iOS Safari defines navigator.standalone (false in a browser tab, true when opened from the Home Screen).
+const iosTab = (navigator as Navigator & { standalone?: boolean }).standalone === false
 
-  async function start(e: FormEvent) {
-    e.preventDefault()
-    setBusy(true)
-    setError('')
-    try {
-      await testKey(key.trim(), await getSetting('model', DEFAULT_MODEL))
-      await setSetting('apiKey', key.trim()) // App notices and swaps this screen out
-    } catch (err) {
-      setError((err as Error).message)
-      setBusy(false)
-    }
+export function Onboarding() {
+  function start() {
+    void warmUp() // start the one-time model download now, so the first photo sorts fast
+    void setSetting('onboarded', true) // App notices and swaps this screen out
   }
 
   return (
@@ -29,37 +19,26 @@ export function Onboarding() {
       </div>
       <p className="mt-2 font-hand text-3xl leading-tight">Snap it. I'll sort it. A scrapbook that files itself.</p>
 
-      <form onSubmit={start} className="card relative mt-8 space-y-5 bg-white p-5 pt-7">
+      <section className="card relative mt-8 space-y-4 bg-white p-5 pt-7">
         <span className="tape bg-mint" aria-hidden />
-        <div>
-          <h2 className="heading text-2xl">① Grab a free Gemini key</h2>
-          <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer" className="btn mt-2 bg-blue">
-            Open Google AI Studio ↗
-          </a>
-        </div>
-        <label className="block">
-          <span className="heading block text-2xl">② Paste it here</span>
-          <input
-            type="password"
-            value={key}
-            onChange={(e) => setKey(e.target.value)}
-            placeholder="AIza…"
-            autoComplete="off"
-            spellCheck={false}
-            required
-            className="field mt-2"
-          />
-        </label>
-        {error && <p className="rounded-lg border-2 border-ink bg-tomato p-2 font-bold">❌ {error}</p>}
-        <button className="btn w-full bg-sun text-xl" disabled={busy || !key.trim()}>
-          {busy ? 'Checking…' : "③ Let's go! 🚀"}
+        <ul className="space-y-3 font-bold">
+          <li>📸 Snap a photo, or pick a bunch from your gallery.</li>
+          <li>🧠 A little AI that lives on your phone sorts each one into an album and writes its caption.</li>
+          <li>🔒 No account, no key, no cloud. Your photos never leave this phone.</li>
+        </ul>
+        {iosTab && (
+          <p className="rounded-lg border-2 border-ink bg-sun p-3 text-sm font-bold">
+            📲 On iPhone, add Scrappy to your Home Screen first (Share → Add to Home Screen) and open it from there. Safari and the installed app
+            keep separate photo storage.
+          </p>
+        )}
+        <button className="btn w-full bg-sun text-xl" onClick={start}>
+          Let's go! 🚀
         </button>
-      </form>
+        <p className="text-sm">First time only: I download my sorting brain (about 70 MB), so Wi-Fi is a good idea.</p>
+      </section>
 
-      <p className="mt-6 text-sm leading-relaxed">
-        🔒 Your key and photos stay on this device. There's no account and no server. To sort a photo, a small 768px copy is sent to Google
-        Gemini. On the free tier, Google may use what you send to improve its products.
-      </p>
+      <p className="mt-6 text-sm leading-relaxed">Got a Google Gemini API key? Add it later in Settings for extra-witty captions.</p>
     </main>
   )
 }

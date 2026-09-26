@@ -1,5 +1,5 @@
 import { ALBUMS, type Photo } from '../lib/db.ts'
-import { Burst } from './ui.tsx'
+import { Burst, useModelProgress } from './ui.tsx'
 
 export interface BoothStage {
   url?: string // unset while the photo is still being processed: the polaroid stays grey, like real instant film
@@ -15,6 +15,7 @@ export function Booth({ stage }: { stage: BoothStage }) {
   const { phase, photo } = stage
   const album = ALBUMS[photo?.category ?? 'unsorted']
   const developing = phase === 'developing'
+  const download = useModelProgress()
   return (
     <div className="fixed inset-0 z-50 grid place-items-center overflow-hidden bg-ink/80 p-6" role="status" aria-live="polite">
       {stage.total > 1 && (
@@ -35,7 +36,9 @@ export function Booth({ stage }: { stage: BoothStage }) {
             </div>
             <figcaption className="relative min-h-24 py-2 pr-9">
               {developing ? (
-                <span className="dots font-hand text-3xl">developing</span>
+                <span className="dots font-hand text-3xl">
+                  {download > 0 && download < 1 ? `downloading my sorting brain ${Math.round(download * 100)}%` : 'developing'}
+                </span>
               ) : photo ? (
                 <>
                   <b className="heading block text-2xl">{photo.title}</b>
@@ -43,7 +46,7 @@ export function Booth({ stage }: { stage: BoothStage }) {
                   <span className="absolute right-0 bottom-2 text-3xl">{photo.sticker}</span>
                 </>
               ) : (
-                <span className="font-hand text-2xl leading-none">Saved to Unsorted 📦 I'll sort it later.</span>
+                <span className="font-hand text-2xl leading-none">Saved to Unsorted 📦 I'll sort it as soon as I can.</span>
               )}
             </figcaption>
           </figure>

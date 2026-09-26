@@ -62,3 +62,56 @@ test('parseResult validates and clamps model output', () => {
   assert.throws(() => parseResult('{"category":"cats"}'), /unknown album/)
   assert.throws(() => parseResult('not json'), /gibberish/)
 })
+
+test('label embeddings match the vocabulary (run scripts/embed-labels.ts after editing labels)', async () => {
+  const { LABELS } = await import('./vocab.ts')
+  const { default: emb } = await import('./label-embeddings.json', { with: { type: 'json' } })
+  assert.deepEqual(emb.texts, LABELS.map((l) => l.text))
+  assert.equal(emb.scales.length, LABELS.length)
+  assert.equal(Buffer.from(emb.data, 'base64').length, LABELS.length * emb.dims)
+})
+
+test('score picks the album with the most probability and names the best label', async () => {
+  const { LABELS, score } = await import('./vocab.ts')
+  const sims = LABELS.map((l) => (l.name === 'biryani' ? 0.32 : l.name === 'curry' ? 0.315 : 0.2))
+  const s = score(sims)
+  assert.equal(s.category, 'food')
+  assert.equal(s.best.name, 'biryani')
+  assert.deepEqual(s.runnerUps.map((l) => l.name), ['curry'])
+  // A flat, uncertain result falls back to a generic label instead of guessing a name.
+  const flat = score(LABELS.map(() => 0.2))
+  assert.equal(flat.best.name, undefined)
+})
+
+test('writeUp stays within the caption rules for every label', async () => {
+  const { LABELS, writeUp } = await import('./vocab.ts')
+  const words = (s: string) => s.split(/\s+/).filter(Boolean).length
+  for (const [i, best] of LABELS.entries()) {
+    for (const seed of ['a', 'b', 'c', 'd', 'e', 'f', 'g']) {
+      const r = writeUp({ category: best.cat, confidence: 1, best, runnerUps: [] }, seed + i, new Date(2026, 8, 26, 9).getTime())
+      const text = `${r.title} ${r.caption} ${r.extra.value}`
+      assert.equal(r.category, best.cat)
+      assert.ok(!/[{}]/.test(text), `unfilled template: ${text}`)
+      assert.ok(words(r.title) >= 1 && words(r.title) <= 5, `title: ${r.title}`)
+      assert.ok(words(r.caption) <= 15, `caption: ${r.caption}`)
+      assert.ok(r.tags.length >= 1 && r.tags.length <= 5 && r.tags.every((t) => t === t.toLowerCase()), `tags: ${r.tags}`)
+      assert.ok(r.sticker && r.extra.label && r.extra.value)
+    }
+  }
+  // Same photo, same words.
+  const best = LABELS.find((l) => l.name === 'pizza')!
+  const once = writeUp({ category: 'food', confidence: 1, best, runnerUps: [] }, 'photo-1', 0)
+  assert.deepEqual(writeUp({ category: 'food', confidence: 1, best, runnerUps: [] }, 'photo-1', 0), once)
+})
+
+test('time-of-day tags follow the clock', async () => {
+  const { LABELS, writeUp } = await import('./vocab.ts')
+  const at = (h: number) => new Date(2026, 8, 26, h).getTime()
+  const food = { category: 'food' as const, confidence: 1, best: LABELS.find((l) => l.name === 'biryani')!, runnerUps: [] }
+  assert.ok(writeUp(food, 'x', at(1)).tags.includes('midnight snack'))
+  assert.ok(writeUp(food, 'x', at(8)).tags.includes('breakfast'))
+  assert.ok(writeUp(food, 'x', at(20)).tags.includes('dinner'))
+  const view = { category: 'views' as const, confidence: 1, best: LABELS.find((l) => l.name === 'beach')!, runnerUps: [] }
+  assert.ok(writeUp(view, 'x', at(1)).tags.includes('night'))
+  assert.ok(writeUp(view, 'x', at(12)).tags.includes('daytime'))
+})

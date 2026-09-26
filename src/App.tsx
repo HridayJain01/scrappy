@@ -6,7 +6,7 @@ import { Recap } from './components/Recap.tsx'
 import { Settings } from './components/Settings.tsx'
 import { Today } from './components/Today.tsx'
 import { TabBar, Toaster } from './components/ui.tsx'
-import { ALBUMS, getSetting, useLive, type AlbumId } from './lib/db.ts'
+import { ALBUMS, getSetting, setSetting, useLive, type AlbumId } from './lib/db.ts'
 import { sortPending } from './lib/sorter.ts'
 
 // Routes: #/  #/albums  #/album/<id>  #/recap  #/settings  #/photo/<scope>/<photoId>
@@ -38,14 +38,17 @@ function useHash() {
 }
 
 export default function App() {
-  const apiKey = useLive(() => getSetting('apiKey', ''))
+  // Early versions onboarded by pasting a Gemini key, so a saved key also counts as onboarded.
+  const onboarded = useLive(async () => (await getSetting('onboarded', false)) || !!(await getSetting('apiKey', '')))
   const hash = useHash()
   useEffect(() => {
-    if (apiKey) void sortPending() // retry anything left unsorted last time
-  }, [apiKey])
+    if (!onboarded) return
+    void setSetting('onboarded', true) // so removing a Gemini key later never sends you back to onboarding
+    void sortPending() // retry anything left unsorted last time
+  }, [onboarded])
 
-  if (apiKey === undefined) return null
-  if (!apiKey) return <Onboarding />
+  if (onboarded === undefined) return null
+  if (!onboarded) return <Onboarding />
 
   const [, page = '', a = '', b = ''] = hash.split('/')
   const [base, arg] = (page === 'photo' ? screenOf(a) : `${page}/${a}`).split('/')

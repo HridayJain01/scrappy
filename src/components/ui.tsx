@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { modelProgress } from '../lib/clip.ts'
 import { ALBUMS, tilt, type Photo } from '../lib/db.ts'
 import { toast } from '../lib/fx.ts'
 import { sortPending } from '../lib/sorter.ts'
@@ -49,6 +50,17 @@ export function Polaroid({ photo, href, small }: { photo: Photo; href: string; s
       </a>
     </div>
   )
+}
+
+/** On-device model download progress, 0…1 (1 = loaded and ready). */
+export function useModelProgress() {
+  const [progress, setProgress] = useState(modelProgress)
+  useEffect(() => {
+    const update = () => setProgress(modelProgress())
+    addEventListener('ai-progress', update)
+    return () => removeEventListener('ai-progress', update)
+  }, [])
+  return progress
 }
 
 // A 12-spike comic burst, slightly uneven so it looks hand-inked.

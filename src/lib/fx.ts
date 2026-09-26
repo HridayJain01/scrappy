@@ -1,7 +1,7 @@
 // Browser-side flourishes and small platform helpers.
 
 export const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches
-export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+export const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
 export const toast = (message: string) => dispatchEvent(new CustomEvent('toast', { detail: message }))
 
@@ -59,13 +59,17 @@ export function download(blob: Blob, name: string) {
   setTimeout(() => URL.revokeObjectURL(a.href), 60_000)
 }
 
-/** Native share sheet when the browser can share files, otherwise a plain download. */
+/** Native share sheet when the browser can share files, otherwise a plain download. False = the user cancelled. */
 export async function shareFile(blob: Blob, name: string, text?: string) {
   const file = new File([blob], name, { type: blob.type })
-  if (!navigator.canShare?.({ files: [file] })) return download(blob, name)
-  try {
-    await navigator.share({ files: [file], text })
-  } catch (e) {
-    if ((e as Error).name !== 'AbortError') download(blob, name)
+  if (navigator.canShare?.({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], text })
+      return true
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') return false
+    }
   }
+  download(blob, name)
+  return true
 }

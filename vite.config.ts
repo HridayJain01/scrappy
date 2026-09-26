@@ -26,6 +26,7 @@ export default defineConfig({
         ],
       },
       workbox: {
+        maximumFileSizeToCacheInBytes: 16 * 1024 ** 2, // the on-device AI's WebAssembly runtime (~14 MB, ~3.7 MB gzipped)
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,

@@ -1,5 +1,6 @@
 import JSZip from 'jszip'
-import { ALBUMS, db, type Photo } from './db.ts'
+import { ALBUMS, dayKey, db, setSetting, type Photo } from './db.ts'
+import { shareFile } from './fx.ts'
 
 // ponytail: JSZip holds the whole archive in memory; fine for thousands of photos, stream it if backups reach ~1 GB.
 
@@ -14,6 +15,12 @@ export async function exportBackup(): Promise<Blob> {
   })
   zip.file('scrappy.json', JSON.stringify({ app: 'scrappy', version: 1, photos }, null, 1))
   return zip.generateAsync({ type: 'blob', compression: 'STORE' }) // JPEGs don't compress
+}
+
+/** Exports and hands the zip to the share sheet (iPhone: Save to Files) or downloads it. Remembers how many were saved. */
+export async function backUpNow() {
+  const count = await db.photos.count()
+  if (await shareFile(await exportBackup(), `scrappy-backup-${dayKey()}.zip`)) await setSetting('backupCount', count)
 }
 
 /** Restores a backup. Photos keep their ids, so importing the same zip twice doesn't duplicate anything. */

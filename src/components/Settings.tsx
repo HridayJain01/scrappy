@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { dayKey, db, getSetting, setSetting, useLive } from '../lib/db.ts'
-import { shareFile, toast } from '../lib/fx.ts'
+import { isModelCached, warmUp } from '../lib/clip.ts'
+import { db, getSetting, setSetting, useLive } from '../lib/db.ts'
+import { toast } from '../lib/fx.ts'
 import { DEFAULT_MODEL, testKey } from '../lib/gemini.ts'
+import { useModelProgress } from './ui.tsx'
 
 const backup = () => import('../lib/backup.ts') // JSZip loads only when you back up
 
@@ -14,6 +16,8 @@ export function Settings() {
   const [busy, setBusy] = useState('')
   const [persisted, setPersisted] = useState<boolean>()
   const [quota, setQuota] = useState<number>()
+  const [cached, setCached] = useState<boolean>()
+  const download = useModelProgress()
   const importer = useRef<HTMLInputElement>(null)
   const usage = useLive(async () => {
     let count = 0
@@ -28,6 +32,7 @@ export function Settings() {
   useEffect(() => {
     getSetting('apiKey', '').then(setKey)
     getSetting('model', DEFAULT_MODEL).then(setModel)
+    isModelCached().then(setCached)
     navigator.storage?.persisted?.().then(setPersisted)
     navigator.storage?.estimate?.().then((e) => setQuota(e.quota))
   }, [])
@@ -44,10 +49,9 @@ export function Settings() {
 
   const save = (e: FormEvent) => {
     e.preventDefault()
-    if (!key.trim()) return toast('The API key can’t be empty')
     run('save', async () => {
       await Promise.all([setSetting('apiKey', key.trim()), setSetting('model', model.trim() || DEFAULT_MODEL)])
-      toast('Saved ✓')
+      toast(key.trim() ? 'Saved ✓ Gemini will write the captions' : 'Saved ✓ Everything stays on this phone')
     })
   }
 
@@ -69,16 +73,47 @@ export function Settings() {
       toast(ok ? '📌 Locked in: the browser won’t clear your photos' : 'The browser said no. Install Scrappy to your home screen, then try again.')
     })
 
+  const downloading = download > 0 && download < 1
   return (
     <>
       <h1 className="heading text-6xl">Settings</h1>
       <p className="mb-6 font-hand text-2xl">the boring-but-important page</p>
 
+      <section className="card mb-7 space-y-3 bg-white p-4">
+        <h2 className="heading text-3xl">🧠 Sorting</h2>
+        {downloading ? (
+          <p className="font-bold">Downloading my sorting brain… {Math.round(download * 100)}%</p>
+        ) : download === 1 || cached ? (
+          <p>✅ The on-device AI is ready. It sorts and captions photos right here on your phone, even offline.</p>
+        ) : (
+          cached === false && (
+            <>
+              <p>The on-device AI isn't downloaded yet. It's about 70 MB, one time only.</p>
+              <button className="btn bg-mint" onClick={() => void warmUp()}>
+                ⬇️ Download now
+              </button>
+            </>
+          )
+        )}
+      </section>
+
       <form onSubmit={save} className="card mb-7 space-y-4 bg-white p-4">
-        <h2 className="heading text-3xl">🤖 Gemini</h2>
+        <h2 className="heading text-3xl">✨ Smarter captions</h2>
+        <p className="text-sm">
+          Optional. Add a free Google Gemini key and Gemini writes wittier captions whenever you're online. A 768px copy of each photo is then
+          sent to Google. Leave it empty to keep everything on this phone.
+        </p>
         <label className="block">
-          <span className="mb-1 block font-bold">API key</span>
-          <input type="password" value={key} onChange={(e) => setKey(e.target.value)} autoComplete="off" spellCheck={false} className="field" />
+          <span className="mb-1 block font-bold">Gemini API key</span>
+          <input
+            type="password"
+            value={key}
+            onChange={(e) => setKey(e.target.value)}
+            placeholder="Empty = on-device only"
+            autoComplete="off"
+            spellCheck={false}
+            className="field"
+          />
         </label>
         <label className="block">
           <span className="mb-1 block font-bold">Model</span>
@@ -88,17 +123,17 @@ export function Settings() {
           <button className="btn bg-sun" disabled={!!busy}>
             💾 Save
           </button>
-          <button type="button" className="btn bg-white" onClick={check} disabled={!!busy}>
+          <button type="button" className="btn bg-white" onClick={check} disabled={!!busy || !key.trim()}>
             {busy === 'test' ? 'Testing…' : '🧪 Test key'}
           </button>
         </div>
         {test && <p className={`rounded-lg border-2 border-ink p-2 font-bold ${test.ok ? 'bg-mint' : 'bg-tomato'}`}>{test.text}</p>}
         <p className="text-sm">
-          Need a key? It's free at{' '}
+          Get a key at{' '}
           <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer" className="font-bold underline">
             aistudio.google.com/apikey
           </a>
-          . It stays on this device.
+          . It's stored only on this device.
         </p>
       </form>
 
@@ -126,13 +161,9 @@ export function Settings() {
 
       <section className="card mb-7 space-y-3 bg-white p-4">
         <h2 className="heading text-3xl">📦 Backup</h2>
-        <p>Photos live only on this device. Export a zip now and then; import it on any device to restore.</p>
+        <p>Photos live only on this device. Export a zip now and then (on iPhone, choose Save to Files); import it on any device to restore.</p>
         <div className="flex flex-wrap gap-3">
-          <button
-            className="btn bg-blue"
-            disabled={!!busy || !usage?.count}
-            onClick={() => run('export', async () => shareFile(await (await backup()).exportBackup(), `scrappy-backup-${dayKey()}.zip`))}
-          >
+          <button className="btn bg-blue" disabled={!!busy || !usage?.count} onClick={() => run('export', async () => (await backup()).backUpNow())}>
             {busy === 'export' ? 'Zipping…' : '⬇️ Export backup'}
           </button>
           <button className="btn bg-white" disabled={!!busy} onClick={() => importer.current?.click()}>
@@ -152,7 +183,7 @@ export function Settings() {
         </div>
       </section>
 
-      <p className="text-center font-hand text-2xl">Scrappy · made for one very specific person 📸</p>
+      <p className="text-center font-hand text-2xl">Scrappy · sorted on your phone, kept on your phone 📸</p>
     </>
   )
 }

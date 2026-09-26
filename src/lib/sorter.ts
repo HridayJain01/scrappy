@@ -1,28 +1,48 @@
+import { classifyLocally } from './clip.ts'
 import { db, dayKey, getSetting, newId, type Photo } from './db.ts'
-import { toast, sleep } from './fx.ts'
-import { DEFAULT_MODEL, classify } from './gemini.ts'
+import { sleep, toast } from './fx.ts'
+import { DEFAULT_MODEL, classify, type AiResult } from './gemini.ts'
 import { aiCopy, prepare } from './images.ts'
 
-/** Saves the photo first (as pending, in Unsorted), so nothing is lost if the AI never answers. */
+let askedToPersist = false
+
+/** Saves the photo first (as pending, in Unsorted), so nothing is lost if sorting never finishes. */
 export async function ingest(file: File): Promise<Photo> {
   const { full, thumb, ratio, takenAt } = await prepare(file)
   const photo: Photo = { id: newId(), full, thumb, ratio, takenAt, day: dayKey(new Date(takenAt)), category: 'unsorted', status: 'pending' }
   await db.photos.add(photo)
+  // First photo: ask the browser not to evict our storage. Most grant silently; installed apps almost always do.
+  if (!askedToPersist) {
+    askedToPersist = true
+    navigator.storage?.persist?.().catch(() => {})
+  }
   return photo
+}
+
+/** Gemini when you've added a key (wittier captions); otherwise, or if Gemini fails, the on-device model. */
+async function describe(photo: Photo): Promise<AiResult> {
+  const key = await getSetting('apiKey', '')
+  if (key && navigator.onLine) {
+    try {
+      return await classify(await aiCopy(photo.full), key, await getSetting('model', DEFAULT_MODEL))
+    } catch (e) {
+      toast(`Gemini hiccup (${(e as Error).message}), so I sorted it on-device.`)
+    }
+  }
+  return classifyLocally(photo)
 }
 
 const inflight = new Set<string>()
 
-/** Asks Gemini about one pending photo. Resolves undefined when skipped (offline, busy, gone); throws on AI errors. */
+/** Sorts one pending photo. Resolves undefined when skipped (busy, gone, already done); throws if sorting failed. */
 export async function sortPhoto(id: string): Promise<Photo | undefined> {
-  if (!navigator.onLine || inflight.has(id)) return
+  if (inflight.has(id)) return
   inflight.add(id)
   try {
     const photo = await db.photos.get(id)
     if (photo?.status !== 'pending') return
-    const [key, model] = await Promise.all([getSetting('apiKey', ''), getSetting('model', DEFAULT_MODEL)])
-    const ai = await classify(await aiCopy(photo.full), key, model)
-    // Re-read inside the write: the user may have moved or captioned it while Gemini was thinking.
+    const ai = await describe(photo)
+    // Re-read inside the write: the user may have moved or captioned it while the AI was thinking.
     await db.photos
       .where('id')
       .equals(id)
@@ -45,9 +65,9 @@ export function sortPending() {
     let lastError = ''
     try {
       const ids = await db.photos.where('status').equals('pending').primaryKeys()
+      const gemini = !!(await getSetting('apiKey', ''))
       for (const [i, id] of ids.entries()) {
-        if (!navigator.onLine) break
-        if (i) await sleep(4000) // ponytail: fixed pacing for the free tier's ~15 requests/min; honour 429 retryDelay if limits bite
+        if (i && gemini) await sleep(4000) // ponytail: fixed pacing for Gemini's free tier (~15 requests/min)
         try {
           if (await sortPhoto(id)) sorted++
         } catch (e) {

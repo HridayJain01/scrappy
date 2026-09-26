@@ -10,6 +10,7 @@ export function Today() {
   const photos = useLive(() => dayPhotos(today), [today])
   const streak = useLive(streakNow)
   const pending = useLive(pendingCount)
+  const unbacked = useLive(async () => (await db.photos.count()) - (await getSetting('backupCount', 0)))
   const flashbacks = useLive(() => Promise.all(flashbackDays(today).map(async (f) => ({ ...f, photos: await dayPhotos(f.day) }))), [today])
   const [stage, setStage] = useState<BoothStage>()
   const [busy, setBusy] = useState(false)
@@ -54,10 +55,10 @@ export function Today() {
       const base = { ...n, url, ratio: photo.ratio }
       setStage({ ...base, phase: 'developing' })
       const [sorted] = await Promise.all([
-        sortPhoto(photo.id).catch((err: Error) => void toast(`Gemini hiccup: ${err.message} Saved to Unsorted 📦`)),
+        // Don't hold the booth hostage to a first-time model download: after 15s it keeps sorting in the background.
+        Promise.race([sortPhoto(photo.id).catch((err: Error) => void toast(`Couldn't sort it yet (${err.message}). It's in Unsorted 📦`)), sleep(15_000)]),
         sleep(motion ? 2000 : 300),
       ])
-      if (!navigator.onLine) toast("You're offline, so it's in Unsorted 📦 I'll sort it when you're back.")
       setStage({ ...base, phase: 'reveal', photo: sorted ?? undefined })
       await sleep(motion ? 1900 : 1500)
       if (motion) {
@@ -68,6 +69,14 @@ export function Today() {
     }
     setStage(undefined)
     setBusy(false)
+  }
+
+  async function backUp() {
+    try {
+      await (await import('../lib/backup.ts')).backUpNow()
+    } catch (e) {
+      toast(`😵 ${(e as Error).message}`)
+    }
   }
 
   const memories = flashbacks?.filter((f) => f.photos.length)
@@ -104,6 +113,15 @@ export function Today() {
             📦 {pending} waiting to be sorted
           </p>
           <SortNow />
+        </section>
+      )}
+
+      {unbacked !== undefined && unbacked >= 25 && (
+        <section className="card mb-6 flex items-center justify-between gap-3 bg-mint/40 p-3">
+          <p className="font-bold">💾 {unbacked} photos since your last backup, and they only live on this phone.</p>
+          <button className="btn shrink-0 bg-white" onClick={backUp}>
+            Back up
+          </button>
         </section>
       )}
 
