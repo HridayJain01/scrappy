@@ -85,10 +85,25 @@ Install *before* taking photos on iPhone: Safari and the installed app keep sepa
 
 Scrappy asks the browser for persistent storage after your first photo, so it won't clear your scrapbook when space runs low. If Settings still shows **Keep my photos safe**, tap it.
 
+## Make it yours
+
+- **New albums:** Albums → **+ New album**. Pick a name, emoji, colour and the comic word that pops when a photo lands there.
+- **Auto-add:** give your album keywords (e.g. `cat`, `dog` for a Pets album, `coffee`, `latte` for Coffee). New photos tagged with any of them land there instead of a built-in album. Suggestions come from the on-device AI's vocabulary; with Gemini, its tags are matched too.
+- **Restyle any album:** open it and tap **✏️ Edit**. Built-in albums can be renamed and recoloured too, and **Reset to original** brings them back.
+- **Delete your albums:** photos inside go back to the album the AI picked for them.
+- **Add photos straight into an album:** open it and tap **➕ Add**. They stay there; the AI just writes their captions.
+- **Edit any photo:** the caption right under it, or **✏️ Edit details** for title, sticker, date, tags and the extra line. **🎲 New words** rolls a fresh title and caption. Tap the album chip, or **Move**, to put it in another album.
+
+## Updates
+
+Every time you deploy to Vercel, installed copies pick it up on their own. When the app is opened or brought back to the front while online, it downloads the new version in the background and shows **✨ Scrappy got an update! → Update**. Tapping it reloads into the new version; otherwise it applies the next time the app is fully closed and reopened. Photos, albums, settings and the downloaded AI are kept.
+
+The app never swaps versions mid-session on its own: an old page asking the new deployment for files that no longer exist (like the AI worker) would break until a reload.
+
 ## Your photos and backups
 
 - Photos are stored only in this browser on this device, as a 1600px JPEG plus a small thumbnail. Nothing is uploaded anywhere else.
-- Clearing site data, uninstalling the app, or switching phones loses them. Use **Settings → Export backup** now and then: it saves a zip (on iPhone, pick **Save to Files** in the share sheet) with every photo and a `scrappy.json` of titles, captions and albums (never your API key).
+- Clearing site data, uninstalling the app, or switching phones loses them. Use **Settings → Export backup** now and then: it saves a zip (on iPhone, pick **Save to Files** in the share sheet) with every photo and a `scrappy.json` of titles, captions, your albums and their styles (never your API key).
 - **Import backup** restores that zip on any device. Importing the same backup twice doesn't create duplicates.
 - Today shows a reminder with a **Back up** button once 25 photos have piled up since your last backup.
 

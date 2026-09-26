@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { ALBUMS, CATEGORIES, dayKey, monthLabel, monthPhotos, shiftMonth, tilt, useLive, type AlbumId, type Photo } from '../lib/db.ts'
+import { dayKey, monthLabel, monthPhotos, shiftMonth, tilt, useLive, type Album, type Photo } from '../lib/db.ts'
 import { shareFile, toast } from '../lib/fx.ts'
 import { decode, toJpeg } from '../lib/images.ts'
-import { Polaroid } from './ui.tsx'
+import { Polaroid, useAlbums } from './ui.tsx'
 
 /** Up to n photos spread evenly across the month. */
 const spread = (photos: Photo[], n = 9) => (photos.length <= n ? photos : Array.from({ length: n }, (_, i) => photos[Math.floor((i * photos.length) / n)]))
@@ -17,10 +17,10 @@ export function Recap() {
   const [month, setMonth] = useState(() => dayKey().slice(0, 7))
   const photos = useLive(() => monthPhotos(month), [month])
   const [busy, setBusy] = useState(false)
+  const albums = useAlbums().list
   const list = photos ?? []
-  const counts = ([...CATEGORIES, 'unsorted'] as AlbumId[])
-    .map((id) => [id, list.filter((p) => p.category === id).length] as const)
-    .filter(([id, n]) => id !== 'unsorted' || n)
+  // Built-in albums always show; your own albums and Unsorted only when they got photos this month.
+  const counts = albums.map((a) => [a, list.filter((p) => p.category === a.id).length] as const).filter(([a, n]) => n || (a.builtin && a.id !== 'unsorted'))
   const top = topSticker(list)
   const picks = spread(list)
   const label = monthLabel(month)
@@ -67,9 +67,9 @@ export function Recap() {
               {list.length} photo{list.length === 1 ? '' : 's'} in the scrapbook
             </p>
             <ul className="mt-4 flex flex-wrap gap-2">
-              {counts.map(([id, n]) => (
-                <li key={id} className="rounded-full border-3 border-ink px-3 py-1 font-bold" style={{ background: ALBUMS[id].color }}>
-                  {ALBUMS[id].emoji} {ALBUMS[id].name} · {n}
+              {counts.map(([a, n]) => (
+                <li key={a.id} className="rounded-full border-3 border-ink px-3 py-1 font-bold" style={{ background: a.color }}>
+                  {a.emoji} {a.name} · {n}
                 </li>
               ))}
             </ul>
@@ -97,7 +97,8 @@ export function Recap() {
 }
 
 /** Draws the recap page onto a 1080px-wide canvas. */
-async function renderRecap(label: string, total: number, counts: (readonly [AlbumId, number])[], top: [string, number] | undefined, picks: Photo[]) {
+async function renderRecap(label: string, total: number, allCounts: (readonly [Album, number])[], top: [string, number] | undefined, picks: Photo[]) {
+  const counts = [...allCounts].sort((a, b) => b[1] - a[1]).slice(0, 5) // the image has room for five
   await Promise.all(['100px Bangers', '50px Caveat'].map((f) => document.fonts.load(f)))
   const W = 1080
   const P = 70
@@ -136,12 +137,12 @@ async function renderRecap(label: string, total: number, counts: (readonly [Albu
   g.fillText(`${total} photo${total === 1 ? '' : 's'} in my scrapbook`, P, 262)
 
   const bw = (W - P * 2 - 24 * (counts.length - 1)) / counts.length
-  counts.forEach(([id, n], i) => {
+  counts.forEach(([album, n], i) => {
     const x = P + i * (bw + 24)
-    box(x, 320, bw, 110, ALBUMS[id].color)
+    box(x, 320, bw, 110, album.color)
     g.fillStyle = '#111'
     g.font = '52px sans-serif'
-    g.fillText(ALBUMS[id].emoji, x + 18, 378)
+    g.fillText(album.emoji, x + 18, 378)
     g.font = '64px Bangers'
     g.fillText(String(n), x + 90, 380)
   })

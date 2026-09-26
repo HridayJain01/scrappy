@@ -8,7 +8,9 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
-      registerType: 'autoUpdate',
+      // 'prompt': a new deploy downloads in the background and applies when you tap Update (see UpdateBanner).
+      // Auto-swapping mid-session would strand the open page on deleted asset files (e.g. the AI worker) until a reload.
+      registerType: 'prompt',
       includeAssets: ['favicon.svg', 'apple-touch-icon-180x180.png'],
       manifest: {
         name: 'Scrappy',
@@ -26,6 +28,7 @@ export default defineConfig({
         ],
       },
       workbox: {
+        clientsClaim: true, // the first install controls the page right away (so it works offline without a reload)
         maximumFileSizeToCacheInBytes: 16 * 1024 ** 2, // the on-device AI's WebAssembly runtime (~14 MB, ~3.7 MB gzipped)
         runtimeCaching: [
           {

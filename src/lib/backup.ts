@@ -1,10 +1,10 @@
 import JSZip from 'jszip'
-import { ALBUMS, dayKey, db, setSetting, type Photo } from './db.ts'
+import { BUILTIN_ALBUMS, CATEGORIES, dayKey, db, setSetting, type Category, type Photo } from './db.ts'
 import { shareFile } from './fx.ts'
 
 // ponytail: JSZip holds the whole archive in memory; fine for thousands of photos, stream it if backups reach ~1 GB.
 
-/** Zip of photos/<id>.jpg + thumbs/<id>.jpg + scrappy.json (everything except the API key). */
+/** Zip of photos/<id>.jpg + thumbs/<id>.jpg + scrappy.json with captions and your albums (everything except the API key). */
 export async function exportBackup(): Promise<Blob> {
   const zip = new JSZip()
   const photos: Omit<Photo, 'full' | 'thumb'>[] = []
@@ -13,7 +13,7 @@ export async function exportBackup(): Promise<Blob> {
     zip.file(`thumbs/${meta.id}.jpg`, thumb)
     photos.push(meta)
   })
-  zip.file('scrappy.json', JSON.stringify({ app: 'scrappy', version: 1, photos }, null, 1))
+  zip.file('scrappy.json', JSON.stringify({ app: 'scrappy', version: 2, albums: await db.albums.toArray(), photos }, null, 1))
   return zip.generateAsync({ type: 'blob', compression: 'STORE' }) // JPEGs don't compress
 }
 
@@ -30,7 +30,8 @@ export async function importBackup(file: File): Promise<number> {
   })
   const json = await zip.file('scrappy.json')?.async('string')
   if (!json) throw new Error('Not a Scrappy backup (scrappy.json is missing)')
-  const items: unknown = JSON.parse(json).photos
+  const data = JSON.parse(json)
+  const items: unknown = data.photos
   if (!Array.isArray(items)) throw new Error('Backup has no photo list')
 
   const jpeg = async (path: string) => {
@@ -38,11 +39,29 @@ export async function importBackup(file: File): Promise<number> {
     return f && new Blob([await f.async('arraybuffer')], { type: 'image/jpeg' })
   }
   const str = (v: unknown) => (typeof v === 'string' ? v : undefined)
+  const strings = (v: unknown, max: number) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').slice(0, max) : undefined)
+
+  // Albums first (v2 backups), rebuilt field by field like everything else: the zip is an untrusted file.
+  for (const a of Array.isArray(data.albums) ? data.albums : []) {
+    const id = str(a?.id)
+    const name = str(a?.name)
+    if (!id || !name || !/^#[0-9a-f]{6}$/i.test(a.color)) continue
+    await db.albums.put({
+      id,
+      name: name.slice(0, 30),
+      emoji: str(a.emoji)?.slice(0, 16) || '📁',
+      color: a.color,
+      burst: str(a.burst)?.slice(0, 10) || 'YAY!',
+      keywords: strings(a.keywords, 30),
+      createdAt: Number.isFinite(a.createdAt) ? a.createdAt : Date.now(),
+    })
+  }
+  const known = new Set<string>([...Object.keys(BUILTIN_ALBUMS), ...((await db.albums.toCollection().primaryKeys()) as string[])])
+
   let count = 0
   for (const m of items) {
-    // Rebuild each record field by field: the zip is an untrusted file.
     const id = str(m?.id)
-    if (!id || !Object.hasOwn(ALBUMS, m.category) || !/^\d{4}-\d{2}-\d{2}$/.test(m.day) || !Number.isFinite(m.takenAt)) continue
+    if (!id || !/^\d{4}-\d{2}-\d{2}$/.test(m.day) || !Number.isFinite(m.takenAt)) continue
     const [full, thumb] = await Promise.all([jpeg(`photos/${id}.jpg`), jpeg(`thumbs/${id}.jpg`)])
     if (!full || !thumb) continue
     await db.photos.put({
@@ -52,12 +71,13 @@ export async function importBackup(file: File): Promise<number> {
       ratio: Number(m.ratio) > 0 ? Number(m.ratio) : 1,
       takenAt: m.takenAt,
       day: m.day,
-      category: m.category,
+      category: known.has(m.category) ? m.category : 'unsorted',
+      aiCategory: CATEGORIES.includes(m.aiCategory) ? (m.aiCategory as Category) : undefined,
       status: m.status === 'done' ? 'done' : 'pending',
       manual: m.manual === true,
       title: str(m.title),
       caption: str(m.caption),
-      tags: Array.isArray(m.tags) ? m.tags.filter((t: unknown) => typeof t === 'string') : [],
+      tags: strings(m.tags, 10) ?? [],
       sticker: str(m.sticker),
       extra: m.extra && typeof m.extra === 'object' ? { label: str(m.extra.label) ?? '', value: str(m.extra.value) ?? '' } : undefined,
     })

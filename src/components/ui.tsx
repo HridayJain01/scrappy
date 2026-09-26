@@ -1,8 +1,33 @@
-import { useEffect, useState } from 'react'
+import { createContext, useContext, useEffect, useMemo, useState } from 'react'
+import { useRegisterSW } from 'virtual:pwa-register/react'
 import { modelProgress } from '../lib/clip.ts'
-import { ALBUMS, tilt, type Photo } from '../lib/db.ts'
+import { tilt, type Album, type Photo } from '../lib/db.ts'
 import { toast } from '../lib/fx.ts'
 import { sortPending } from '../lib/sorter.ts'
+
+/** All albums (built-ins with your edits + your own), provided by App once loaded. */
+export const AlbumsContext = createContext<Album[]>([])
+export function useAlbums() {
+  const list = useContext(AlbumsContext)
+  return useMemo(() => {
+    const byId = new Map(list.map((a) => [a.id, a]))
+    // A photo whose album vanished (shouldn't happen, deleteAlbum moves them) still renders, as Unsorted.
+    return { list, get: (id: string) => byId.get(id) ?? byId.get('unsorted')! }
+  }, [list])
+}
+
+/** Keeps only the last character typed (emoji-aware), so typing a new emoji replaces the old one. */
+export const lastEmoji = (s: string) => [...new Intl.Segmenter().segment(s.trim())].at(-1)?.segment ?? ''
+
+/** Lets the phone's back button close a sheet instead of leaving the page. Call close() through the returned function. */
+export function useBackToClose(onClose: () => void) {
+  useEffect(() => {
+    history.pushState({ sheet: true }, '')
+    addEventListener('popstate', onClose)
+    return () => removeEventListener('popstate', onClose)
+  }, [])
+  return () => history.back()
+}
 
 // Stored blobs never change, so one object URL per photo+size lives for the whole session.
 const urls = new Map<string, string>()
@@ -21,11 +46,12 @@ export function forgetUrls(id: string) {
 
 export function Polaroid({ photo, href, small }: { photo: Photo; href: string; small?: boolean }) {
   const pending = photo.status === 'pending'
+  const album = useAlbums().get(photo.category)
   return (
     // The wrapper's top padding holds the tape's overhang, so a masonry column break can't split it off.
     <div className="break-inside-avoid pt-3.5 pb-2">
       <a href={href} className="polaroid" style={{ rotate: `${tilt(photo.id)}deg` }}>
-        <span className="tape" style={{ background: ALBUMS[photo.category].color }} aria-hidden />
+        <span className="tape" style={{ background: album.color }} aria-hidden />
         <img
           src={blobUrl(photo, 'thumb')}
           alt={photo.title || photo.caption || 'Photo'}
@@ -48,6 +74,35 @@ export function Polaroid({ photo, href, small }: { photo: Photo; href: string; s
           </span>
         )}
       </a>
+    </div>
+  )
+}
+
+/** When you deploy a new version, installed apps show this until tapped. Updating mid-session could break a photo in progress. */
+export function UpdateBanner() {
+  const {
+    needRefresh: [needRefresh],
+    updateServiceWorker,
+  } = useRegisterSW({
+    onRegisteredSW(_url, reg) {
+      // Installed apps can sit open for days: look for a new version whenever the app comes back to the front.
+      if (reg) addEventListener('visibilitychange', () => document.visibilityState === 'visible' && void reg.update())
+    },
+  })
+  if (!needRefresh) return null
+  return (
+    <div className="card rise mb-5 flex items-center justify-between gap-3 bg-blue p-3" role="status">
+      <p className="font-bold">✨ Scrappy got an update! Your photos stay put.</p>
+      <button
+        className="btn shrink-0 bg-white"
+        onClick={() => {
+          // Reload as soon as the new version takes over (covers a first session that was never controlled, too).
+          navigator.serviceWorker.addEventListener('controllerchange', () => location.reload())
+          void updateServiceWorker(false)
+        }}
+      >
+        Update
+      </button>
     </div>
   )
 }

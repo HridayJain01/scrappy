@@ -5,8 +5,8 @@ import { PhotoView } from './components/PhotoView.tsx'
 import { Recap } from './components/Recap.tsx'
 import { Settings } from './components/Settings.tsx'
 import { Today } from './components/Today.tsx'
-import { TabBar, Toaster } from './components/ui.tsx'
-import { ALBUMS, getSetting, setSetting, useLive, type AlbumId } from './lib/db.ts'
+import { AlbumsContext, TabBar, Toaster, UpdateBanner } from './components/ui.tsx'
+import { getSetting, loadAlbums, setSetting, useLive } from './lib/db.ts'
 import { sortPending } from './lib/sorter.ts'
 
 // Routes: #/  #/albums  #/album/<id>  #/recap  #/settings  #/photo/<scope>/<photoId>
@@ -40,6 +40,7 @@ function useHash() {
 export default function App() {
   // Early versions onboarded by pasting a Gemini key, so a saved key also counts as onboarded.
   const onboarded = useLive(async () => (await getSetting('onboarded', false)) || !!(await getSetting('apiKey', '')))
+  const albums = useLive(loadAlbums)
   const hash = useHash()
   useEffect(() => {
     if (!onboarded) return
@@ -47,24 +48,27 @@ export default function App() {
     void sortPending() // retry anything left unsorted last time
   }, [onboarded])
 
-  if (onboarded === undefined) return null
+  if (onboarded === undefined || !albums) return null
   if (!onboarded) return <Onboarding />
 
   const [, page = '', a = '', b = ''] = hash.split('/')
   const [base, arg] = (page === 'photo' ? screenOf(a) : `${page}/${a}`).split('/')
   const screen =
     base === 'albums' ? <Albums /> :
-    base === 'album' && Object.hasOwn(ALBUMS, arg) ? <AlbumView id={arg as AlbumId} /> :
+    base === 'album' ? albums.some((al) => al.id === arg) ? <AlbumView key={arg} id={arg} /> : <Albums /> :
     base === 'recap' ? <Recap /> :
     base === 'settings' ? <Settings /> :
     <Today />
 
   return (
-    <>
-      <main className="mx-auto max-w-lg px-4 pt-[calc(env(safe-area-inset-top)+1.25rem)] pb-[calc(env(safe-area-inset-bottom)+7rem)]">{screen}</main>
+    <AlbumsContext.Provider value={albums}>
+      <main className="mx-auto max-w-lg px-4 pt-[calc(env(safe-area-inset-top)+1.25rem)] pb-[calc(env(safe-area-inset-bottom)+7rem)]">
+        <UpdateBanner />
+        {screen}
+      </main>
       <TabBar current={base === 'album' ? 'albums' : (base ?? '')} />
       {page === 'photo' && b && <PhotoView key={a} scope={a} id={b} />}
       <Toaster />
-    </>
+    </AlbumsContext.Provider>
   )
 }

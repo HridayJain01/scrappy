@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
-import { ALBUMS, CATEGORIES, db, diaryDate, scopePhotos, useLive, type Category } from '../lib/db.ts'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { dayKey, db, diaryDate, scopePhotos, useLive, type Photo } from '../lib/db.ts'
 import { shareFile, toast } from '../lib/fx.ts'
-import { blobUrl, forgetUrls } from './ui.tsx'
+import { rewrite } from '../lib/sorter.ts'
+import { blobUrl, forgetUrls, lastEmoji, useAlbums } from './ui.tsx'
 
 /** Full-screen photo: pinch to zoom, swipe to move through its album/day/month. No rotation, no decoration on the image. */
 export function PhotoView({ scope, id }: { scope: string; id: string }) {
@@ -11,9 +12,12 @@ export function PhotoView({ scope, id }: { scope: string; id: string }) {
   useEffect(() => {
     scopePhotos(scope).then((list) => setIds(list.map((p) => p.id)))
   }, [scope])
+  const albums = useAlbums()
   const [picking, setPicking] = useState(false)
   const [confirming, setConfirming] = useState(false)
-  useEffect(() => (setPicking(false), setConfirming(false)), [id])
+  const [editing, setEditing] = useState(false)
+  const [rolling, setRolling] = useState(false)
+  useEffect(() => (setPicking(false), setConfirming(false), setEditing(false)), [id])
 
   const stage = useRef<HTMLDivElement>(null)
   const img = useRef<HTMLImageElement>(null)
@@ -125,10 +129,20 @@ export function PhotoView({ scope, id }: { scope: string; id: string }) {
     // go/apply only read refs, so wiring them once is enough.
   }, [])
 
-  async function move(category: Category) {
-    await db.photos.update(id, { category, manual: true })
+  async function move(to: string) {
+    await db.photos.update(id, { category: to, manual: true })
     setPicking(false)
-    toast(`Moved to ${ALBUMS[category].name} ${ALBUMS[category].emoji}`)
+    toast(`Moved to ${albums.get(to).name} ${albums.get(to).emoji}`)
+  }
+
+  async function reroll() {
+    setRolling(true)
+    try {
+      await rewrite(id)
+    } catch (e) {
+      toast(`Couldn't think of new words 😵 ${(e as Error).message}`)
+    }
+    setRolling(false)
   }
 
   async function remove() {
@@ -142,7 +156,7 @@ export function PhotoView({ scope, id }: { scope: string; id: string }) {
     location.replace(`#/photo/${scope}/${next}`)
   }
 
-  const album = photo ? ALBUMS[photo.category] : undefined
+  const album = photo ? albums.get(photo.category) : undefined
   const action = 'btn flex-col gap-0 px-2 py-1.5 text-sm'
   const index = ids.indexOf(id)
   return (
@@ -197,20 +211,33 @@ export function PhotoView({ scope, id }: { scope: string; id: string }) {
             />
           </label>
 
-          {photo.extra?.value && (
-            <p className="card w-fit -rotate-1 bg-sun px-4 py-2">
-              <b className="heading text-xl">{photo.extra.label}:</b> <span className="font-hand text-2xl">{photo.extra.value}</span>
-            </p>
-          )}
-
-          {!!photo.tags?.length && (
-            <ul className="flex flex-wrap gap-2" aria-label="Tags">
-              {photo.tags.map((t) => (
-                <li key={t} className="rounded-full border-2 border-ink bg-white px-3 py-1 text-sm font-bold">
-                  #{t}
-                </li>
-              ))}
-            </ul>
+          {editing ? (
+            <PhotoEditor photo={photo} onDone={() => setEditing(false)} />
+          ) : (
+            <>
+              {photo.extra?.value && (
+                <p className="card w-fit -rotate-1 bg-sun px-4 py-2">
+                  <b className="heading text-xl">{photo.extra.label}:</b> <span className="font-hand text-2xl">{photo.extra.value}</span>
+                </p>
+              )}
+              {!!photo.tags?.length && (
+                <ul className="flex flex-wrap gap-2" aria-label="Tags">
+                  {photo.tags.map((t) => (
+                    <li key={t} className="rounded-full border-2 border-ink bg-white px-3 py-1 text-sm font-bold">
+                      #{t}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <div className="grid grid-cols-2 gap-3">
+                <button className="btn bg-white" onClick={() => setEditing(true)}>
+                  ✏️ Edit details
+                </button>
+                <button className="btn bg-mint" onClick={reroll} disabled={rolling}>
+                  {rolling ? 'Thinking…' : '🎲 New words'}
+                </button>
+              </div>
+            </>
           )}
 
           <div>
@@ -220,11 +247,13 @@ export function PhotoView({ scope, id }: { scope: string; id: string }) {
             {picking && (
               <div className="rise mt-4 grid grid-cols-2 gap-3">
                 <p className="col-span-2 font-bold">Move to…</p>
-                {CATEGORIES.filter((c) => c !== photo.category).map((c) => (
-                  <button key={c} className="btn" style={{ background: ALBUMS[c].color }} onClick={() => move(c)}>
-                    {ALBUMS[c].emoji} {ALBUMS[c].name}
-                  </button>
-                ))}
+                {albums.list
+                  .filter((a) => a.id !== photo.category && a.id !== 'unsorted')
+                  .map((a) => (
+                    <button key={a.id} className="btn break-words" style={{ background: a.color }} onClick={() => move(a.id)}>
+                      {a.emoji} {a.name}
+                    </button>
+                  ))}
               </div>
             )}
           </div>
@@ -257,5 +286,74 @@ export function PhotoView({ scope, id }: { scope: string; id: string }) {
         </section>
       )}
     </div>
+  )
+}
+
+/** Everything about a photo is yours to change: title, sticker, date, tags and the extra line. */
+function PhotoEditor({ photo, onDone }: { photo: Photo; onDone: () => void }) {
+  const [f, setF] = useState({
+    title: photo.title ?? '',
+    sticker: photo.sticker ?? '',
+    day: photo.day,
+    tags: photo.tags?.join(', ') ?? '',
+    label: photo.extra?.label ?? '',
+    value: photo.extra?.value ?? '',
+  })
+  const set = (patch: Partial<typeof f>) => setF((x) => ({ ...x, ...patch }))
+
+  async function save(e: FormEvent) {
+    e.preventDefault()
+    const [y, m, d] = f.day.split('-').map(Number)
+    const when = new Date(photo.takenAt)
+    if (y) when.setFullYear(y, m - 1, d) // keeps the time of day
+    await db.photos.update(photo.id, {
+      title: f.title.trim(),
+      sticker: f.sticker,
+      day: dayKey(when),
+      takenAt: when.getTime(),
+      tags: [...new Set(f.tags.split(',').map((t) => t.trim().toLowerCase()).filter(Boolean))].slice(0, 10),
+      extra: f.label.trim() || f.value.trim() ? { label: f.label.trim(), value: f.value.trim() } : undefined,
+    })
+    toast('Saved ✓')
+    onDone()
+  }
+
+  return (
+    <form onSubmit={save} className="card rise space-y-3 bg-white p-4">
+      <label className="block">
+        <span className="mb-1 block font-bold">Title</span>
+        <input value={f.title} onChange={(e) => set({ title: e.target.value })} maxLength={60} className="field heading text-xl" />
+      </label>
+      <div className="flex gap-3">
+        <label className="block">
+          <span className="mb-1 block font-bold">Sticker</span>
+          <input value={f.sticker} onChange={(e) => set({ sticker: lastEmoji(e.target.value) })} className="field w-20 text-center text-2xl" />
+        </label>
+        <label className="block min-w-0 flex-1">
+          <span className="mb-1 block font-bold">Date</span>
+          <input type="date" value={f.day} max={dayKey()} onChange={(e) => set({ day: e.target.value })} required className="field" />
+        </label>
+      </div>
+      <label className="block">
+        <span className="mb-1 block font-bold">Tags (comma separated)</span>
+        <input value={f.tags} onChange={(e) => set({ tags: e.target.value })} className="field" placeholder="beach, friends, sunset" />
+      </label>
+      <div className="grid grid-cols-[2fr_3fr] gap-3">
+        <label className="block">
+          <span className="mb-1 block font-bold">Extra</span>
+          <input value={f.label} onChange={(e) => set({ label: e.target.value })} maxLength={30} className="field" placeholder="Vibe" />
+        </label>
+        <label className="block">
+          <span className="mb-1 block font-bold">says</span>
+          <input value={f.value} onChange={(e) => set({ value: e.target.value })} maxLength={80} className="field" placeholder="golden hour calm" />
+        </label>
+      </div>
+      <div className="flex gap-3">
+        <button className="btn flex-1 bg-sun">💾 Save</button>
+        <button type="button" className="btn bg-white" onClick={onDone}>
+          Cancel
+        </button>
+      </div>
+    </form>
   )
 }

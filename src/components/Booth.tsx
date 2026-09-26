@@ -1,5 +1,5 @@
-import { ALBUMS, type Photo } from '../lib/db.ts'
-import { Burst, useModelProgress } from './ui.tsx'
+import type { Photo } from '../lib/db.ts'
+import { Burst, useAlbums, useModelProgress } from './ui.tsx'
 
 export interface BoothStage {
   url?: string // unset while the photo is still being processed: the polaroid stays grey, like real instant film
@@ -13,7 +13,7 @@ export interface BoothStage {
 /** The photo-booth moment: a polaroid develops, wobbles, gets its comic burst, then flies to its album. */
 export function Booth({ stage }: { stage: BoothStage }) {
   const { phase, photo } = stage
-  const album = ALBUMS[photo?.category ?? 'unsorted']
+  const album = useAlbums().get(photo?.category ?? 'unsorted')
   const developing = phase === 'developing'
   const download = useModelProgress()
   return (

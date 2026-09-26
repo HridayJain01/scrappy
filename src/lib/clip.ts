@@ -53,8 +53,8 @@ async function pixels(blob: Blob) {
   return out
 }
 
-/** Sorts and captions a photo entirely on this device. */
-export async function classifyLocally(photo: Pick<Photo, 'id' | 'thumb' | 'takenAt'>): Promise<AiResult> {
+/** Sorts and captions a photo entirely on this device. A different `seed` picks different words for the same photo. */
+export async function classifyLocally(photo: Pick<Photo, 'id' | 'thumb' | 'takenAt'>, seed = photo.id): Promise<AiResult> {
   const sims = await send(await pixels(photo.thumb))
-  return writeUp(score(sims!), photo.id, photo.takenAt)
+  return writeUp(score(sims!), seed, photo.takenAt)
 }

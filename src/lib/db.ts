@@ -1,8 +1,20 @@
 import Dexie, { liveQuery, type EntityTable } from 'dexie'
 import { useEffect, useState } from 'react'
 
-export type Category = 'fits' | 'food' | 'views' | 'random'
-export type AlbumId = Category | 'unsorted'
+export type Category = 'fits' | 'food' | 'views' | 'random' // what the AI can pick
+export type AlbumId = string // a Category, 'unsorted', or one of your own albums' ids
+
+export interface Album {
+  id: string
+  name: string
+  emoji: string
+  color: string
+  burst: string // the comic word when a photo lands here
+  keywords?: string[] // your albums: photos tagged with any of these land here automatically
+  createdAt?: number // your albums are listed oldest first
+  builtin?: boolean // set by loadAlbums, never stored
+  empty?: string[] // built-ins' cheeky empty-state lines
+}
 
 export interface Photo {
   id: string
@@ -12,6 +24,7 @@ export interface Photo {
   takenAt: number // epoch ms (EXIF date or capture time)
   day: string // local YYYY-MM-DD
   category: AlbumId
+  aiCategory?: Category // where the AI put it, so deleting one of your albums can send photos back
   status: 'pending' | 'done' // pending = the AI hasn't captioned it yet
   manual?: boolean // the user picked the album; the AI never overrides it
   title?: string
@@ -23,7 +36,8 @@ export interface Photo {
 
 export const CATEGORIES: Category[] = ['fits', 'food', 'views', 'random']
 
-export const ALBUMS: Record<AlbumId, { name: string; emoji: string; color: string; burst: string; empty: string[] }> = {
+/** Built-in albums. You can restyle them (stored in db.albums under the same id) but not delete them. */
+export const BUILTIN_ALBUMS: Record<Category | 'unsorted', Omit<Album, 'id'>> = {
   fits: {
     name: 'Fit Check',
     emoji: '👕',
@@ -64,16 +78,51 @@ export const ALBUMS: Record<AlbumId, { name: string; emoji: string; color: strin
 export const db = new Dexie('scrappy') as Dexie & {
   photos: EntityTable<Photo, 'id'>
   settings: EntityTable<{ key: string; value: unknown }, 'key'>
+  albums: EntityTable<Album, 'id'>
 }
-db.version(1).stores({
+db.version(2).stores({
   photos: 'id, day, status, [category+takenAt]',
   settings: 'key',
+  albums: 'id',
 })
 
 export const getSetting = async <T>(key: string, fallback: T) => ((await db.settings.get(key))?.value as T | undefined) ?? fallback
 export const setSetting = (key: string, value: unknown) => db.settings.put({ key, value })
 
 export const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+
+// ---- albums ----
+
+export const isBuiltin = (id: string) => Object.hasOwn(BUILTIN_ALBUMS, id)
+
+/** Every album: the four built-ins (with your edits), your own albums (oldest first), then Unsorted. */
+export async function loadAlbums(): Promise<Album[]> {
+  const saved = new Map((await db.albums.toArray()).map((a) => [a.id, a]))
+  const builtin = (id: Category | 'unsorted'): Album => ({ ...BUILTIN_ALBUMS[id], ...saved.get(id), id, builtin: true })
+  const yours = [...saved.values()].filter((a) => !isBuiltin(a.id)).sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0))
+  return [...CATEGORIES.map(builtin), ...yours, builtin('unsorted')]
+}
+
+export const saveAlbum = ({ builtin: _, empty: __, ...album }: Album) => db.albums.put(album)
+
+/** Deletes one of your albums. Its photos go back to where the AI put them (or get re-sorted if it never saw them). */
+export const deleteAlbum = (id: string) =>
+  db.transaction('rw', db.photos, db.albums, async () => {
+    await inAlbum(id).modify((p) => {
+      p.manual = false
+      p.category = p.aiCategory ?? 'unsorted'
+      if (!p.aiCategory) p.status = 'pending'
+    })
+    await db.albums.delete(id)
+  })
+
+const norm = (s: string) => s.toLowerCase().trim().replace(/s$/, '') // "cats" matches "cat"
+
+/** Where a freshly described photo goes: the first of your albums whose keywords match its tags, else the AI's pick. */
+export function routeAlbum(albums: Album[], ai: { category: Category; tags: string[] }): AlbumId {
+  const tags = new Set(ai.tags.map(norm))
+  return albums.find((a) => a.keywords?.some((k) => tags.has(norm(k))))?.id ?? ai.category
+}
 
 /** Re-runs `query` whenever the data it read changes. undefined = still loading. */
 export function useLive<T>(query: () => Promise<T> | T, deps: unknown[] = []): T | undefined {

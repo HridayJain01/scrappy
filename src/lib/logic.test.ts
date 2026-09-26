@@ -115,3 +115,15 @@ test('time-of-day tags follow the clock', async () => {
   assert.ok(writeUp(view, 'x', at(1)).tags.includes('night'))
   assert.ok(writeUp(view, 'x', at(12)).tags.includes('daytime'))
 })
+
+test('your albums grab photos by keyword, otherwise the AI picks', async () => {
+  const { routeAlbum } = await import('./db.ts')
+  const pets = { id: 'pets', name: 'Pets', emoji: '🐾', color: '#9B5DE5', burst: 'AWW!', keywords: ['cats', 'Dog'] }
+  const coffee = { id: 'coffee', name: 'Coffee', emoji: '☕', color: '#C9ADA7', burst: 'SIP!', keywords: ['latte', 'coffee'] }
+  const builtin = { id: 'food', name: 'Food Diary', emoji: '🍜', color: '#FF5A36', burst: 'YUM!', builtin: true }
+  assert.equal(routeAlbum([builtin, pets, coffee], { category: 'random', tags: ['cat', 'animals'] }), 'pets') // "cats" ~ "cat"
+  assert.equal(routeAlbum([pets, coffee], { category: 'food', tags: ['hot dog', 'food'] }), 'food') // "dog" isn't "hot dog"
+  assert.equal(routeAlbum([pets, coffee], { category: 'food', tags: ['latte', 'drinks'] }), 'coffee')
+  assert.equal(routeAlbum([coffee, pets], { category: 'random', tags: ['dog', 'coffee'] }), 'coffee') // first match wins
+  assert.equal(routeAlbum([pets], { category: 'views', tags: [] }), 'views')
+})
