@@ -14,6 +14,8 @@ export interface Album {
   createdAt?: number // your albums are listed oldest first
   builtin?: boolean // set by loadAlbums, never stored
   empty?: string[] // built-ins' cheeky empty-state lines
+  cover?: string // pinned cover photo id (else the newest photo)
+  locked?: boolean // private: needs Face ID / fingerprint to open
 }
 
 export interface Photo {
@@ -32,6 +34,15 @@ export interface Photo {
   tags?: string[]
   sticker?: string
   extra?: { label: string; value: string }
+  fav?: boolean
+  decor?: Decor[] // emoji stuck on the polaroid's frame
+}
+
+/** A sticker on the frame: x/y in % of the polaroid, pinned to one of its edges. */
+export interface Decor {
+  e: string
+  x: number
+  y: number
 }
 
 export const CATEGORIES: Category[] = ['fits', 'food', 'views', 'random']
@@ -136,18 +147,50 @@ export function useLive<T>(query: () => Promise<T> | T, deps: unknown[] = []): T
 
 // ---- queries ----
 
-const inAlbum = (c: AlbumId) => db.photos.where('[category+takenAt]').between([c, Dexie.minKey], [c, Dexie.maxKey])
-export const albumPhotos = (c: AlbumId) => inAlbum(c).reverse().toArray()
-export const albumStats = (c: AlbumId) => Promise.all([inAlbum(c).count(), inAlbum(c).last()]).then(([count, cover]) => ({ count, cover }))
-export const dayPhotos = (day: string) => db.photos.where('day').equals(day).sortBy('takenAt')
-export const monthPhotos = (month: string) => db.photos.where('day').between(`${month}-01`, `${month}-32`).sortBy('takenAt')
-export const pendingCount = () => db.photos.where('status').equals('pending').count()
-export const streakNow = async () => streakFrom((await db.photos.orderBy('day').uniqueKeys()) as string[])
+/** Private albums not unlocked this session. App refreshes it every render; screens that mix albums skip these. */
+export const hiddenAlbums = new Set<string>()
+export const unlockedAlbums = new Set<string>() // ponytail: unlocked until the app restarts; re-lock on backgrounding if that's too loose
+const visible = (ps: Photo[]) => ps.filter((p) => !hiddenAlbums.has(p.category))
 
-/** Photo-view scopes: "c:<album>" | "d:<YYYY-MM-DD>" | "m:<YYYY-MM>". */
+/** ⭐ Favourites is a virtual album: every photo with a heart, from any album. */
+export const FAVS: Album = {
+  id: 'favs',
+  name: 'Favourites',
+  emoji: '⭐',
+  color: '#FFD23F',
+  burst: 'LOVE!',
+  builtin: true,
+  empty: ['No favourites yet. Tap the ♡ on a photo you love.', 'Nothing hearted yet. Be picky, but not that picky.'],
+}
+
+/** Tag search across everything: tags, caption, title or sticker. */
+export const matches = (p: Photo, q: string) =>
+  !q || !!p.tags?.some((t) => t.includes(q)) || !!p.caption?.toLowerCase().includes(q) || !!p.title?.toLowerCase().includes(q) || p.sticker === q
+export const searchPhotos = async (q: string) => visible(await db.photos.orderBy('day').reverse().filter((p) => matches(p, q)).toArray())
+
+const inAlbum = (c: AlbumId) => db.photos.where('[category+takenAt]').between([c, Dexie.minKey], [c, Dexie.maxKey])
+export const albumPhotos = async (c: AlbumId) =>
+  c === FAVS.id ? visible(await db.photos.filter((p) => !!p.fav).toArray()).sort((a, b) => b.takenAt - a.takenAt) : inAlbum(c).reverse().toArray()
+export const albumStats = (c: AlbumId) => Promise.all([inAlbum(c).count(), inAlbum(c).last()]).then(([count, cover]) => ({ count, cover }))
+export const dayPhotos = async (day: string) => visible(await db.photos.where('day').equals(day).sortBy('takenAt'))
+export const monthPhotos = async (month: string) => visible(await db.photos.where('day').between(`${month}-01`, `${month}-32`).sortBy('takenAt'))
+// ponytail: reads every photo row of the year (blobs are lazy handles, so it's cheap); add a day→album cache if years get huge.
+export const yearPhotos = async (year: string) => visible(await db.photos.where('day').between(`${year}-01-01`, `${year}-12-32`).sortBy('takenAt'))
+export const randomPhoto = async () => {
+  const ids = (await db.photos.toCollection().primaryKeys()) as string[]
+  for (let tries = 0; tries < 10 && ids.length; tries++) {
+    const p = await db.photos.get(pick(ids))
+    if (p && !hiddenAlbums.has(p.category)) return p
+  }
+}
+export const allDays = async () => (await db.photos.orderBy('day').uniqueKeys()) as string[]
+export const pendingCount = () => db.photos.where('status').equals('pending').count()
+export const streakNow = async () => streakFrom(await allDays())
+
+/** Photo-view scopes: "c:<album>" | "d:<YYYY-MM-DD>" (over Today) | "y:<YYYY-MM-DD>" (over Recap) | "m:<YYYY-MM>" | "s:<search>". */
 export const scopePhotos = (scope: string) => {
   const [kind, arg] = [scope.slice(0, 1), scope.slice(2)]
-  return kind === 'c' ? albumPhotos(arg as AlbumId) : kind === 'm' ? monthPhotos(arg) : dayPhotos(arg)
+  return kind === 'c' ? albumPhotos(arg as AlbumId) : kind === 'm' ? monthPhotos(arg) : kind === 's' ? searchPhotos(decodeURIComponent(arg)) : dayPhotos(arg)
 }
 
 // ---- dates & little helpers (pure, tested in logic.test.ts) ----
@@ -187,6 +230,21 @@ export function streakFrom(days: string[], today = dayKey()): number {
     d.setDate(d.getDate() - 1)
   }
   return n
+}
+
+/** Longest run of consecutive days ever (days sorted ascending, as the index returns them). */
+export function longestStreak(days: string[]): number {
+  let best = 0
+  let run = 0
+  let prev = ''
+  for (const day of days) {
+    const d = fromKey(day)
+    d.setDate(d.getDate() - 1)
+    run = prev === dayKey(d) ? run + 1 : 1
+    best = Math.max(best, run)
+    prev = day
+  }
+  return best
 }
 
 /** Same date last month and last year. Built as strings so "Feb 31" simply matches nothing. */

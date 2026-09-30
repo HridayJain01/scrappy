@@ -1,30 +1,75 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { albumPhotos, albumStats, db, deleteAlbum, diaryDate, newId, pick, saveAlbum, useLive, type Album, type Photo } from '../lib/db.ts'
-import { toast } from '../lib/fx.ts'
+import {
+  albumPhotos, albumStats, dayKey, db, deleteAlbum, diaryDate, FAVS, hiddenAlbums, matches, newId, pick, saveAlbum, searchPhotos, unlockedAlbums, useLive,
+  type Album, type Photo,
+} from '../lib/db.ts'
+import { shareFile, toast } from '../lib/fx.ts'
+import { decode, toJpeg } from '../lib/images.ts'
+import { canLock, verify } from '../lib/lock.ts'
 import { ingest, sortPending } from '../lib/sorter.ts'
 import { LABELS } from '../lib/vocab.ts'
 import { blobUrl, lastEmoji, Polaroid, SortNow, useAlbums, useBackToClose } from './ui.tsx'
 
+/** Count + cover for the grid. A pinned cover wins while it's still in the album. */
+async function stats(a: Album) {
+  if (a.id === FAVS.id) {
+    const favs = await albumPhotos(FAVS.id)
+    return { count: favs.length, cover: favs[0] }
+  }
+  const { count, cover } = await albumStats(a.id)
+  const pinned = a.cover ? await db.photos.get(a.cover) : undefined
+  return { count, cover: pinned?.category === a.id ? pinned : cover }
+}
+
 export function Albums() {
   const { list } = useAlbums()
-  const stats = useLive(() => Promise.all(list.map((a) => albumStats(a.id))), [list])
+  const shelf = [FAVS, ...list]
+  const all = useLive(() => Promise.all(shelf.map(stats)), [list])
   const [editing, setEditing] = useState(false)
+  const [query, setQuery] = useState('')
+  const q = query.trim().toLowerCase()
+  const found = useLive(() => (q ? searchPhotos(q) : undefined), [q])
   return (
     <>
       <h1 className="heading text-6xl">Albums</h1>
-      <p className="mb-6 font-hand text-2xl">sorted by a robot with taste (and you)</p>
+      <p className="mb-5 font-hand text-2xl">sorted by a robot with taste (and you)</p>
+      <label className="mb-7 block">
+        <span className="sr-only">Search all photos by tag or caption</span>
+        <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="🔍 Search every photo: pizza, beach, 🐶…" className="field" />
+      </label>
+
+      {q ? (
+        found && (found.length ? (
+          <>
+            <p className="mb-3 font-bold">
+              {found.length} photo{found.length === 1 ? '' : 's'} match “{query.trim()}”
+            </p>
+            <div className="columns-2 gap-4">
+              {found.map((p) => (
+                <Polaroid key={p.id} photo={p} href={`#/photo/s:${encodeURIComponent(q)}/${p.id}`} />
+              ))}
+            </div>
+          </>
+        ) : (
+          <p className="font-hand text-3xl leading-tight">Nothing matches “{query.trim()}”. Try a tag like food, beach or cat.</p>
+        ))
+      ) : (
       <div className="grid grid-cols-2 gap-x-4 gap-y-7">
-        {stats &&
-          list.map((album, i) => {
-            const { count, cover } = stats[i] ?? { count: 0 }
-            if (album.id === 'unsorted' && !count) return null
+        {all &&
+          shelf.map((album, i) => {
+            const { count, cover } = all[i] ?? { count: 0 }
+            if ((album.id === 'unsorted' || album.id === FAVS.id) && !count) return null
             return (
               <a key={album.id} href={`#/album/${album.id}`} className="group relative block pt-4 transition-transform active:translate-1">
                 {/* folder tab */}
                 <span className="absolute top-0 left-3 h-6 w-20 rounded-t-lg border-3 border-b-0 border-ink" style={{ background: album.color }} />
                 <div className="card relative flex h-full flex-col rounded-tl-none p-3 group-active:shadow-none" style={{ background: album.color }}>
                   <div className="grid aspect-square place-items-center overflow-hidden rounded-lg border-3 border-ink bg-white">
-                    {cover ? (
+                    {album.locked ? (
+                      <span className="text-5xl" aria-label="Private">
+                        🔒
+                      </span>
+                    ) : cover ? (
                       <img src={blobUrl(cover, 'thumb')} alt="" className="size-full object-cover" />
                     ) : (
                       <span className="text-5xl" aria-hidden>
@@ -52,23 +97,26 @@ export function Albums() {
           </span>
         </button>
       </div>
+      )}
       {editing && <AlbumEditor onClose={() => setEditing(false)} />}
     </>
   )
 }
 
-const matches = (p: Photo, q: string) =>
-  !q || p.tags?.some((t) => t.includes(q)) || p.caption?.toLowerCase().includes(q) || p.title?.toLowerCase().includes(q)
-
 const YOUR_EMPTY = ['Nothing in here yet. Add some photos!', 'Empty for now. Fill me up!', 'A fresh page, waiting for its first photo.']
 
 export function AlbumView({ id }: { id: string }) {
-  const album = useAlbums().get(id)
-  const photos = useLive(() => albumPhotos(id), [id])
+  const favs = id === FAVS.id
+  const albums = useAlbums()
+  const album = favs ? FAVS : albums.get(id)
+  const [open, setOpen] = useState(() => !album.locked || unlockedAlbums.has(id))
+  const photos = useLive(() => (open ? albumPhotos(id) : Promise.resolve([])), [id, open])
   const [query, setQuery] = useState('')
   const [empty] = useState(() => pick(album.empty ?? YOUR_EMPTY))
   const [editing, setEditing] = useState(false)
   const [adding, setAdding] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [picked, setPicked] = useState<string[]>() // set = picking photos for a booth strip
   const picker = useRef<HTMLInputElement>(null)
   const q = query.trim().toLowerCase()
   const shown = photos?.filter((p) => matches(p, q)) ?? []
@@ -76,6 +124,13 @@ export function AlbumView({ id }: { id: string }) {
   // Newest first, grouped under diary-style day headers.
   const days = new Map<string, Photo[]>()
   for (const p of shown) days.set(p.day, [...(days.get(p.day) ?? []), p])
+
+  async function unlock() {
+    if (!(await verify())) return toast("That didn't unlock it 🔒")
+    unlockedAlbums.add(id)
+    hiddenAlbums.delete(id)
+    setOpen(true)
+  }
 
   async function add(files: File[]) {
     setAdding(true)
@@ -93,17 +148,67 @@ export function AlbumView({ id }: { id: string }) {
     void sortPending() // writes their captions; the album stays yours
   }
 
+  async function run(job: () => Promise<unknown>) {
+    setBusy(true)
+    try {
+      await job()
+    } catch (e) {
+      toast(`😵 ${(e as Error).message}`)
+    }
+    setBusy(false)
+  }
+
+  const share = () =>
+    run(async () => {
+      const { exportBackup } = await import('../lib/backup.ts')
+      const name = album.name.replace(/[^\w -]+/g, '').trim() || 'album'
+      await shareFile(await exportBackup(favs ? { photos: photos ?? [] } : { album }), `scrappy-${name}.zip`, `My “${album.name}” album from Scrappy. Open Scrappy → Settings → Import to add it.`)
+    })
+
+  const strip = () =>
+    run(async () => {
+      const chosen = picked!.map((pid) => photos!.find((p) => p.id === pid)!)
+      await shareFile(await renderStrip(chosen), `scrappy-strip-${dayKey()}.jpg`)
+      setPicked(undefined)
+    })
+
+  const toggle = (pid: string) =>
+    setPicked((list = []) => (list.includes(pid) ? list.filter((x) => x !== pid) : list.length < 4 ? [...list, pid] : (toast('4 photos max, like a real booth 📸'), list)))
+
+  if (!open)
+    return (
+      <div className="card mt-10 space-y-4 p-6 text-center" style={{ background: album.color }}>
+        <p className="text-7xl" aria-hidden>
+          🔒
+        </p>
+        <h1 className="heading text-5xl break-words">
+          {album.name} {album.emoji}
+        </h1>
+        <p className="font-bold">This album is private.</p>
+        <div className="flex justify-center gap-3">
+          <a href="#/albums" onClick={(e) => (e.preventDefault(), history.back())} className="btn bg-white">
+            ← Back
+          </a>
+          <button className="btn bg-sun" onClick={unlock}>
+            🔓 Unlock
+          </button>
+        </div>
+      </div>
+    )
+
   return (
     <>
       <header className="card relative mb-5 p-4" style={{ background: album.color }}>
-        <div className="mb-3 flex gap-2">
+        <div className="mb-3 flex flex-wrap gap-2">
           <a href="#/albums" onClick={(e) => (e.preventDefault(), history.back())} className="btn bg-white text-lg" aria-label="Back to albums">
             ←
           </a>
-          <button className="btn ml-auto bg-white" onClick={() => setEditing(true)}>
-            ✏️ Edit
-          </button>
-          {id !== 'unsorted' && (
+          {!favs && (
+            <button className="btn ml-auto bg-white" onClick={() => setEditing(true)}>
+              ✏️ Edit
+            </button>
+          )}
+          {!favs && id !== 'unsorted' && (
             <button className="btn bg-white" onClick={() => picker.current?.click()} disabled={adding}>
               {adding ? 'Adding…' : '➕ Add'}
             </button>
@@ -134,9 +239,28 @@ export function AlbumView({ id }: { id: string }) {
             <SortNow />
           </div>
         )}
+        {!!photos?.length && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button className="btn bg-white" onClick={() => setPicked(picked ? undefined : [])} aria-pressed={!!picked}>
+              🎞️ {picked ? 'Cancel strip' : 'Booth strip'}
+            </button>
+            <button className="btn bg-white" onClick={share} disabled={busy}>
+              {busy && !picked ? 'Zipping…' : '👯 Share album'}
+            </button>
+          </div>
+        )}
       </header>
 
-      {!!photos?.length && (
+      {picked && (
+        <div className="card rise sticky top-[calc(env(safe-area-inset-top)+0.5rem)] z-30 mb-5 flex items-center justify-between gap-3 bg-sun p-3">
+          <p className="font-bold">Pick 2–4 photos · {picked.length} picked</p>
+          <button className="btn shrink-0 bg-pink" onClick={strip} disabled={picked.length < 2 || busy}>
+            {busy ? 'Printing…' : '📸 Make strip'}
+          </button>
+        </div>
+      )}
+
+      {!!photos?.length && !picked && (
         <label className="mb-6 block">
           <span className="sr-only">Search by tag or caption</span>
           <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="🔍 Search tags or captions" className="field" />
@@ -148,7 +272,7 @@ export function AlbumView({ id }: { id: string }) {
           <h2 className="mb-4 font-hand text-3xl font-bold">{diaryDate(day)}</h2>
           <div className="columns-2 gap-4">
             {list.map((p) => (
-              <Polaroid key={p.id} photo={p} href={`#/photo/c:${id}/${p.id}`} />
+              <Polaroid key={p.id} photo={p} href={`#/photo/c:${id}/${p.id}`} onPick={picked && (() => toggle(p.id))} picked={picked?.includes(p.id)} />
             ))}
           </div>
         </section>
@@ -158,6 +282,36 @@ export function AlbumView({ id }: { id: string }) {
       {editing && <AlbumEditor album={album} onClose={() => setEditing(false)} />}
     </>
   )
+}
+
+/** A classic vertical photo-booth strip: 2–4 frames, black border, date at the bottom. */
+async function renderStrip(photos: Photo[]) {
+  await document.fonts.load('60px Bangers')
+  const W = 600
+  const P = 36
+  const fw = W - P * 2
+  const fh = Math.round((fw * 3) / 4)
+  const H = P + photos.length * (fh + P) + 90
+  const c = document.createElement('canvas')
+  c.width = W
+  c.height = H
+  const g = c.getContext('2d')!
+  g.fillStyle = '#111'
+  g.fillRect(0, 0, W, H)
+  const images = await Promise.all(photos.map((p) => decode(p.full)))
+  images.forEach((im, i) => {
+    const y = P + i * (fh + P)
+    const s = Math.max(fw / im.naturalWidth, fh / im.naturalHeight) // cover-crop to 4:3
+    const sw = fw / s
+    const sh = fh / s
+    g.drawImage(im, (im.naturalWidth - sw) / 2, (im.naturalHeight - sh) / 2, sw, sh, P, y, fw, fh)
+  })
+  g.fillStyle = '#FFF6E5'
+  g.font = '52px Bangers'
+  g.textAlign = 'center'
+  g.textBaseline = 'middle'
+  g.fillText(`SCRAPPY · ${diaryDate(dayKey()).toUpperCase()}`, W / 2, H - 55)
+  return toJpeg(c, 0.9)
 }
 
 // Every colour keeps black text readable (≥ 4.5:1).
@@ -184,6 +338,15 @@ function AlbumEditor({ album, onClose }: { album?: Album; onClose: () => void })
     if (!album) nameInput.current?.focus({ preventScroll: true }) // autoFocus would scroll the sheet mid-slide and clip its top
   }, [album])
   const yours = !a.builtin
+  const [lockable, setLockable] = useState(false)
+  useEffect(() => void canLock().then(setLockable), [])
+
+  // Turning privacy on or off both need your face or finger, so nobody else can flip it.
+  async function toggleLock() {
+    if (!(await verify())) return toast("Couldn't confirm it's you 🔒")
+    if (!a.locked) unlockedAlbums.add(a.id) // you just proved it's you: stay unlocked this session
+    set({ locked: !a.locked })
+  }
 
   function addWord() {
     const w = word.trim().toLowerCase()
@@ -309,6 +472,13 @@ function AlbumEditor({ album, onClose }: { album?: Album; onClose: () => void })
               </ul>
             )}
           </div>
+        )}
+
+        {lockable && a.id !== 'unsorted' && (
+          <label className="flex items-center gap-3 font-bold">
+            <input type="checkbox" checked={!!a.locked} onChange={toggleLock} className="size-6 accent-ink" />
+            🔒 Private: needs Face ID or fingerprint to open, and hides its photos everywhere else
+          </label>
         )}
 
         <div className="flex gap-3 pt-1">

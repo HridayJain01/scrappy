@@ -1,19 +1,27 @@
 import JSZip from 'jszip'
-import { BUILTIN_ALBUMS, CATEGORIES, dayKey, db, setSetting, type Category, type Photo } from './db.ts'
+import { albumPhotos, BUILTIN_ALBUMS, CATEGORIES, dayKey, db, isBuiltin, setSetting, type Album, type Category, type Photo } from './db.ts'
 import { shareFile } from './fx.ts'
 
 // ponytail: JSZip holds the whole archive in memory; fine for thousands of photos, stream it if backups reach ~1 GB.
 
-/** Zip of photos/<id>.jpg + thumbs/<id>.jpg + scrappy.json with captions and your albums (everything except the API key). */
-export async function exportBackup(): Promise<Blob> {
+/**
+ * Zip of photos/<id>.jpg + thumbs/<id>.jpg + scrappy.json with captions and your albums (everything except the API key).
+ * With `album` (or a list of `photos`) it's a shareable zip of just those, which a friend imports the same way.
+ */
+export async function exportBackup(only?: { album?: Album; photos?: Photo[] }): Promise<Blob> {
   const zip = new JSZip()
   const photos: Omit<Photo, 'full' | 'thumb'>[] = []
-  await db.photos.each(({ full, thumb, ...meta }) => {
+  const add = ({ full, thumb, ...meta }: Photo) => {
     zip.file(`photos/${meta.id}.jpg`, full)
     zip.file(`thumbs/${meta.id}.jpg`, thumb)
-    photos.push(meta)
-  })
-  zip.file('scrappy.json', JSON.stringify({ app: 'scrappy', version: 2, albums: await db.albums.toArray(), photos }, null, 1))
+    photos.push(only ? { ...meta, fav: undefined } : meta)
+  }
+  if (only?.album) (await albumPhotos(only.album.id)).forEach(add)
+  else if (only?.photos) only.photos.forEach(add)
+  else await db.photos.each(add)
+  // A shared album travels without its lock: your Face ID means nothing on a friend's phone.
+  const albums = !only ? await db.albums.toArray() : only.album && !isBuiltin(only.album.id) ? [{ ...only.album, locked: false, builtin: undefined }] : []
+  zip.file('scrappy.json', JSON.stringify({ app: 'scrappy', version: 2, albums, photos }, null, 1))
   return zip.generateAsync({ type: 'blob', compression: 'STORE' }) // JPEGs don't compress
 }
 
@@ -54,6 +62,8 @@ export async function importBackup(file: File): Promise<number> {
       burst: str(a.burst)?.slice(0, 10) || 'YAY!',
       keywords: strings(a.keywords, 30),
       createdAt: Number.isFinite(a.createdAt) ? a.createdAt : Date.now(),
+      cover: str(a.cover),
+      locked: a.locked === true || !!(await db.albums.get(id))?.locked, // importing never unlocks a private album
     })
   }
   const known = new Set<string>([...Object.keys(BUILTIN_ALBUMS), ...((await db.albums.toCollection().primaryKeys()) as string[])])
@@ -80,6 +90,13 @@ export async function importBackup(file: File): Promise<number> {
       tags: strings(m.tags, 10) ?? [],
       sticker: str(m.sticker),
       extra: m.extra && typeof m.extra === 'object' ? { label: str(m.extra.label) ?? '', value: str(m.extra.value) ?? '' } : undefined,
+      fav: m.fav === true,
+      decor: Array.isArray(m.decor)
+        ? m.decor
+            .filter((d: { e?: unknown; x?: unknown; y?: unknown }) => typeof d?.e === 'string' && Number.isFinite(d.x) && Number.isFinite(d.y))
+            .slice(0, 12)
+            .map((d: { e: string; x: number; y: number }) => ({ e: d.e.slice(0, 16), x: Math.max(0, Math.min(100, d.x)), y: Math.max(0, Math.min(100, d.y)) }))
+        : undefined,
     })
     count++
   }

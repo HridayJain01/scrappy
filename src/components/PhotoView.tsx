@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { dayKey, db, diaryDate, scopePhotos, useLive, type Photo } from '../lib/db.ts'
+import { dayKey, db, diaryDate, hiddenAlbums, saveAlbum, scopePhotos, useLive, type Photo } from '../lib/db.ts'
 import { shareFile, toast } from '../lib/fx.ts'
 import { rewrite } from '../lib/sorter.ts'
+import { Decorate } from './Decor.tsx'
 import { blobUrl, forgetUrls, lastEmoji, useAlbums } from './ui.tsx'
 
 /** Full-screen photo: pinch to zoom, swipe to move through its album/day/month. No rotation, no decoration on the image. */
 export function PhotoView({ scope, id }: { scope: string; id: string }) {
-  const photo = useLive(() => db.photos.get(id).then((p) => p ?? null), [id])
+  // A photo from a locked album stays hidden, even through a deep link.
+  const photo = useLive(() => db.photos.get(id).then((p) => (p && !hiddenAlbums.has(p.category) ? p : null)), [id])
   // Snapshot of the list at open time, so moving a photo out of this album doesn't break swiping.
   const [ids, setIds] = useState<string[]>([])
   useEffect(() => {
@@ -17,7 +19,8 @@ export function PhotoView({ scope, id }: { scope: string; id: string }) {
   const [confirming, setConfirming] = useState(false)
   const [editing, setEditing] = useState(false)
   const [rolling, setRolling] = useState(false)
-  useEffect(() => (setPicking(false), setConfirming(false), setEditing(false)), [id])
+  const [decorating, setDecorating] = useState(false)
+  useEffect(() => (setPicking(false), setConfirming(false), setEditing(false), setDecorating(false)), [id])
 
   const stage = useRef<HTMLDivElement>(null)
   const img = useRef<HTMLImageElement>(null)
@@ -145,6 +148,16 @@ export function PhotoView({ scope, id }: { scope: string; id: string }) {
     setRolling(false)
   }
 
+  async function heart() {
+    await db.photos.update(id, { fav: !photo?.fav })
+    toast(photo?.fav ? 'Removed from Favourites' : 'Added to Favourites ⭐')
+  }
+
+  async function makeCover() {
+    await saveAlbum({ ...album!, cover: id })
+    toast(`Now the cover of ${album!.name} 📌`)
+  }
+
   async function remove() {
     const i = ids.indexOf(id)
     const next = ids[i + 1] ?? ids[i - 1]
@@ -172,7 +185,7 @@ export function PhotoView({ scope, id }: { scope: string; id: string }) {
             className="size-full object-contain will-change-transform"
           />
         )}
-        {photo === null && <p className="grid size-full place-items-center p-6 text-center font-hand text-3xl text-white">This photo has left the scrapbook.</p>}
+        {photo === null && <p className="grid size-full place-items-center p-6 text-center font-hand text-3xl text-white">This photo has left the scrapbook (or it's in a private album 🔒).</p>}
         <button onClick={() => history.back()} className="btn absolute top-[calc(env(safe-area-inset-top)+0.75rem)] left-3 bg-white text-xl" aria-label="Close" autoFocus>
           ✕
         </button>
@@ -197,6 +210,9 @@ export function PhotoView({ scope, id }: { scope: string; id: string }) {
                 {photo.sticker}
               </span>
             )}
+            <button className={`btn shrink-0 text-2xl ${photo.fav ? 'bg-sun' : 'bg-white'}`} onClick={heart} aria-pressed={!!photo.fav} aria-label="Favourite">
+              {photo.fav ? '⭐' : '☆'}
+            </button>
           </div>
 
           <label className="block">
@@ -213,6 +229,8 @@ export function PhotoView({ scope, id }: { scope: string; id: string }) {
 
           {editing ? (
             <PhotoEditor photo={photo} onDone={() => setEditing(false)} />
+          ) : decorating ? (
+            <Decorate photo={photo} onDone={() => setDecorating(false)} />
           ) : (
             <>
               {photo.extra?.value && (
@@ -264,6 +282,12 @@ export function PhotoView({ scope, id }: { scope: string; id: string }) {
             </button>
             <button className={`${action} bg-white`} onClick={() => setPicking(true)}>
               <span className="text-xl" aria-hidden>📁</span> Move
+            </button>
+            <button className={`${action} bg-pink`} onClick={() => setDecorating(true)}>
+              <span className="text-xl" aria-hidden>🎨</span> Decorate
+            </button>
+            <button className={`${action} bg-sun`} onClick={makeCover} disabled={album.cover === photo.id || album.id === 'unsorted'}>
+              <span className="text-xl" aria-hidden>📌</span> {album.cover === photo.id ? 'Is cover' : 'Cover'}
             </button>
             <button className={`${action} bg-tomato`} onClick={() => setConfirming(true)}>
               <span className="text-xl" aria-hidden>🗑️</span> Delete

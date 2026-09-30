@@ -1,7 +1,8 @@
 // Run with `npm test` (Node's built-in runner; Node strips the TypeScript itself).
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { diaryDate, flashbackDays, shiftMonth, streakFrom, tilt } from './db.ts'
+import { diaryDate, flashbackDays, longestStreak, shiftMonth, streakFrom, tilt } from './db.ts'
+import { BADGES, CHALLENGES, challengeFor, snapToEdge, streakBadge } from './fun.ts'
 import { parseResult } from './gemini.ts'
 
 test('streak counts back from today, or from yesterday until you snap today', () => {
@@ -126,4 +127,34 @@ test('your albums grab photos by keyword, otherwise the AI picks', async () => {
   assert.equal(routeAlbum([pets, coffee], { category: 'food', tags: ['latte', 'drinks'] }), 'coffee')
   assert.equal(routeAlbum([coffee, pets], { category: 'random', tags: ['dog', 'coffee'] }), 'coffee') // first match wins
   assert.equal(routeAlbum([pets], { category: 'views', tags: [] }), 'views')
+})
+
+test('longest streak ever, across month ends and gaps', () => {
+  assert.equal(longestStreak([]), 0)
+  assert.equal(longestStreak(['2026-01-05']), 1)
+  assert.equal(longestStreak(['2026-02-27', '2026-02-28', '2026-03-01', '2026-03-05', '2026-03-06']), 3)
+  assert.equal(longestStreak(['2025-12-30', '2025-12-31', '2026-01-01', '2026-01-02']), 4)
+})
+
+test('challenges: stable per day, checked through the AI tags and album', () => {
+  assert.equal(challengeFor('2026-09-30'), challengeFor('2026-09-30'))
+  assert.ok(new Set(Array.from({ length: 30 }, (_, d) => challengeFor(`2026-09-${String(d + 1).padStart(2, '0')}`))).size > 5)
+  const coffee = CHALLENGES.find((c) => c.emoji === '☕')!
+  assert.ok(coffee.hit({ tags: ['latte', 'drinks'] }))
+  assert.ok(!coffee.hit({ tags: ['pizza'] }))
+  assert.ok(CHALLENGES[0].hit({ aiCategory: 'fits' }))
+})
+
+test('badges: streak milestones', () => {
+  assert.equal(streakBadge(7)?.emoji, '⚡')
+  assert.equal(streakBadge(8), undefined)
+  assert.ok(BADGES.every((b) => b.need > 0))
+})
+
+test('frame stickers snap to the nearest edge', () => {
+  assert.deepEqual(snapToEdge(3, 50, 0.8), [0, 50])
+  assert.deepEqual(snapToEdge(98, 40, 0.8), [100, 40])
+  assert.deepEqual(snapToEdge(50, 5, 0.8), [50, 0])
+  assert.deepEqual(snapToEdge(50, 97, 0.8), [50, 100])
+  assert.deepEqual(snapToEdge(0, 0, 0.8), [0, 4]) // corners stay on the frame
 })

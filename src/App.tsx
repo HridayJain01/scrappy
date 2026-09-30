@@ -6,12 +6,13 @@ import { Recap } from './components/Recap.tsx'
 import { Settings } from './components/Settings.tsx'
 import { Today } from './components/Today.tsx'
 import { AlbumsContext, TabBar, Toaster, UpdateBanner } from './components/ui.tsx'
-import { getSetting, loadAlbums, setSetting, useLive } from './lib/db.ts'
+import { FAVS, getSetting, hiddenAlbums, loadAlbums, setSetting, unlockedAlbums, useLive } from './lib/db.ts'
 import { sortPending } from './lib/sorter.ts'
 
 // Routes: #/  #/albums  #/album/<id>  #/recap  #/settings  #/photo/<scope>/<photoId>
 // A photo opens as an overlay on top of the screen its scope belongs to, so that screen keeps its scroll and state.
-const screenOf = (scope: string) => (scope.startsWith('c:') ? `album/${scope.slice(2)}` : scope.startsWith('m:') ? 'recap' : '')
+const screenOf = (scope: string) =>
+  scope.startsWith('c:') ? `album/${scope.slice(2)}` : scope.startsWith('m:') || scope.startsWith('y:') ? 'recap' : scope.startsWith('s:') ? 'albums' : ''
 
 // Deep link (e.g. a refresh inside a photo)? Put its parent screen underneath in history so "back" stays in the app.
 {
@@ -51,11 +52,15 @@ export default function App() {
   if (onboarded === undefined || !albums) return null
   if (!onboarded) return <Onboarding />
 
+  // Before any screen queries photos, so they all skip private albums you haven't unlocked.
+  hiddenAlbums.clear()
+  for (const a of albums) if (a.locked && !unlockedAlbums.has(a.id)) hiddenAlbums.add(a.id)
+
   const [, page = '', a = '', b = ''] = hash.split('/')
   const [base, arg] = (page === 'photo' ? screenOf(a) : `${page}/${a}`).split('/')
   const screen =
     base === 'albums' ? <Albums /> :
-    base === 'album' ? albums.some((al) => al.id === arg) ? <AlbumView key={arg} id={arg} /> : <Albums /> :
+    base === 'album' ? arg === FAVS.id || albums.some((al) => al.id === arg) ? <AlbumView key={arg} id={arg} /> : <Albums /> :
     base === 'recap' ? <Recap /> :
     base === 'settings' ? <Settings /> :
     <Today />

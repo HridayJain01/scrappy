@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ChangeEvent } from 'react'
-import { dayKey, dayPhotos, db, flashbackDays, getSetting, pendingCount, setSetting, streakNow, useLive, type Photo } from '../lib/db.ts'
+import { dayKey, dayPhotos, db, flashbackDays, getSetting, pendingCount, randomPhoto, setSetting, streakNow, useLive, type Photo } from '../lib/db.ts'
 import { confetti, flash, reducedMotion, shutterSound, sleep, toast, unlockAudio } from '../lib/fx.ts'
+import { challengeFor, streakBadge } from '../lib/fun.ts'
 import { ingest, sortPhoto } from '../lib/sorter.ts'
 import { Booth, type BoothStage } from './Booth.tsx'
 import { Polaroid, SortNow } from './ui.tsx'
@@ -12,6 +13,9 @@ export function Today() {
   const pending = useLive(pendingCount)
   const unbacked = useLive(async () => (await db.photos.count()) - (await getSetting('backupCount', 0)))
   const flashbacks = useLive(() => Promise.all(flashbackDays(today).map(async (f) => ({ ...f, photos: await dayPhotos(f.day) }))), [today])
+  const challenge = challengeFor(today)
+  const doneDays = useLive(() => getSetting<string[]>('challenges', []))
+  const challengeDone = !!doneDays?.includes(today)
   const [stage, setStage] = useState<BoothStage>()
   const [busy, setBusy] = useState(false)
   const camera = useRef<HTMLInputElement>(null)
@@ -25,8 +29,34 @@ export function Today() {
       const last = await getSetting('streak', 0)
       if (streak !== last) await setSetting('streak', streak)
       return streak > last
-    }).then((up) => up && confetti())
+    }).then((up) => {
+      if (!up) return
+      confetti()
+      const badge = streakBadge(streak)
+      if (badge) toast(`🏆 Badge unlocked: ${badge.emoji} ${badge.name}!`)
+    })
   }, [streak, busy])
+
+  // Today's challenge counts once the AI's tags on one of today's photos match it.
+  useEffect(() => {
+    if (busy || !doneDays || challengeDone || !photos?.some((p) => p.status === 'done' && challenge.hit(p))) return
+    db.transaction('rw', db.settings, async () => {
+      const days = await getSetting<string[]>('challenges', [])
+      if (days.includes(today)) return false
+      await setSetting('challenges', [...days, today])
+      return true
+    }).then((won) => {
+      if (!won) return
+      confetti()
+      toast(`🎯 Challenge done: ${challenge.text}!`)
+    })
+  }, [photos, busy, doneDays, challengeDone])
+
+  async function shuffle() {
+    const p = await randomPhoto()
+    if (!p) return toast('Snap a few photos first, then shuffle! 🔀')
+    location.hash = `#/photo/d:${p.day}/${p.id}`
+  }
 
   function open(input: HTMLInputElement | null) {
     unlockAudio() // must happen inside the tap for iOS
@@ -100,11 +130,29 @@ export function Today() {
         <button className="shutter" onClick={() => open(camera.current)} disabled={busy} aria-label="Take a photo">
           <span className="heading text-5xl text-white [-webkit-text-stroke:2px_#111] [text-shadow:3px_3px_0_#111]">SNAP!</span>
         </button>
-        <button className="btn bg-white" onClick={() => open(gallery.current)} disabled={busy}>
-          🖼️ From gallery
-        </button>
+        <div className="flex gap-3">
+          <button className="btn bg-white" onClick={() => open(gallery.current)} disabled={busy}>
+            🖼️ From gallery
+          </button>
+          <button className="btn bg-white" onClick={shuffle}>
+            🔀 Shuffle
+          </button>
+        </div>
         <input ref={camera} type="file" accept="image/*" capture="environment" hidden onChange={snap} />
         <input ref={gallery} type="file" accept="image/*" multiple hidden onChange={snap} />
+      </section>
+
+      <section className={`card mb-6 flex items-center gap-3 p-3 ${challengeDone ? 'bg-mint' : 'bg-white'}`}>
+        <span className="text-4xl" aria-hidden>
+          {challengeDone ? '✅' : challenge.emoji}
+        </span>
+        <div>
+          <p className="heading text-xl">Today's challenge</p>
+          <p className="font-hand text-2xl leading-tight">
+            {challenge.text}
+            {challengeDone ? ' · done!' : ''}
+          </p>
+        </div>
       </section>
 
       {!!pending && (

@@ -161,13 +161,13 @@ export function Settings() {
 
       <section className="card mb-7 space-y-3 bg-white p-4">
         <h2 className="heading text-3xl">📦 Backup</h2>
-        <p>Photos live only on this device. Export a zip now and then (on iPhone, choose Save to Files); import it on any device to restore.</p>
+        <p>Photos live only on this device. Export a zip now and then (on iPhone, choose Save to Files); import it on any device to restore. Got a shared album from a friend? Import its zip here too.</p>
         <div className="flex flex-wrap gap-3">
           <button className="btn bg-blue" disabled={!!busy || !usage?.count} onClick={() => run('export', async () => (await backup()).backUpNow())}>
             {busy === 'export' ? 'Zipping…' : '⬇️ Export backup'}
           </button>
           <button className="btn bg-white" disabled={!!busy} onClick={() => importer.current?.click()}>
-            {busy === 'import' ? 'Importing…' : '⬆️ Import backup'}
+            {busy === 'import' ? 'Importing…' : '⬆️ Import zip'}
           </button>
           <input
             ref={importer}

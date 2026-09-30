@@ -44,13 +44,21 @@ export function forgetUrls(id: string) {
   }
 }
 
-export function Polaroid({ photo, href, small }: { photo: Photo; href: string; small?: boolean }) {
+/** `onPick` turns the polaroid into a checkbox (for picking photos) instead of a link. */
+export function Polaroid({ photo, href, small, onPick, picked }: { photo: Photo; href: string; small?: boolean; onPick?: () => void; picked?: boolean }) {
   const pending = photo.status === 'pending'
   const album = useAlbums().get(photo.category)
   return (
     // The wrapper's top padding holds the tape's overhang, so a masonry column break can't split it off.
     <div className="break-inside-avoid pt-3.5 pb-2">
-      <a href={href} className="polaroid" style={{ rotate: `${tilt(photo.id)}deg` }}>
+      <a
+        href={href}
+        onClick={onPick && ((e) => (e.preventDefault(), onPick()))}
+        role={onPick ? 'checkbox' : undefined}
+        aria-checked={onPick ? !!picked : undefined}
+        className={`polaroid ${picked ? 'outline-4 outline-offset-2 outline-blue' : ''}`}
+        style={{ rotate: `${tilt(photo.id)}deg` }}
+      >
         <span className="tape" style={{ background: album.color }} aria-hidden />
         <img
           src={blobUrl(photo, 'thumb')}
@@ -73,9 +81,34 @@ export function Polaroid({ photo, href, small }: { photo: Photo; href: string; s
             {photo.sticker}
           </span>
         )}
+        <Decorations photo={photo} small={small} />
+        {photo.fav && (
+          <span className={`absolute top-1 right-1 ${small ? 'text-xs' : 'text-lg'}`} aria-label="Favourite">
+            ⭐
+          </span>
+        )}
+        {picked && (
+          <span className="absolute inset-0 grid place-items-center bg-blue/30 text-4xl" aria-hidden>
+            ✅
+          </span>
+        )}
       </a>
     </div>
   )
+}
+
+/** Emoji stuck on the frame (never on the photo, see PhotoView's decorate mode). */
+export function Decorations({ photo, small }: { photo: Photo; small?: boolean }) {
+  return photo.decor?.map((d, i) => (
+    <span
+      key={i}
+      className={`pointer-events-none absolute -translate-1/2 ${small ? 'text-sm' : 'text-2xl'}`}
+      style={{ left: `${d.x}%`, top: `${d.y}%` }}
+      aria-hidden
+    >
+      {d.e}
+    </span>
+  ))
 }
 
 /** When you deploy a new version, installed apps show this until tapped. Updating mid-session could break a photo in progress. */
