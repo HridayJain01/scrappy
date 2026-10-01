@@ -12,7 +12,7 @@ import { sortPending } from './lib/sorter.ts'
 // Routes: #/  #/albums  #/album/<id>  #/recap  #/settings  #/photo/<scope>/<photoId>
 // A photo opens as an overlay on top of the screen its scope belongs to, so that screen keeps its scroll and state.
 const screenOf = (scope: string) =>
-  scope.startsWith('c:') ? `album/${scope.slice(2)}` : scope.startsWith('m:') || scope.startsWith('y:') ? 'recap' : scope.startsWith('s:') ? 'albums' : ''
+  scope.startsWith('c:') ? `album/${scope.slice(2)}` : scope.startsWith('m:') ? 'recap' : scope.startsWith('s:') ? 'albums' : ''
 
 // Deep link (e.g. a refresh inside a photo)? Put its parent screen underneath in history so "back" stays in the app.
 {

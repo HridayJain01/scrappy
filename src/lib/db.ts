@@ -174,8 +174,6 @@ export const albumPhotos = async (c: AlbumId) =>
 export const albumStats = (c: AlbumId) => Promise.all([inAlbum(c).count(), inAlbum(c).last()]).then(([count, cover]) => ({ count, cover }))
 export const dayPhotos = async (day: string) => visible(await db.photos.where('day').equals(day).sortBy('takenAt'))
 export const monthPhotos = async (month: string) => visible(await db.photos.where('day').between(`${month}-01`, `${month}-32`).sortBy('takenAt'))
-// ponytail: reads every photo row of the year (blobs are lazy handles, so it's cheap); add a day→album cache if years get huge.
-export const yearPhotos = async (year: string) => visible(await db.photos.where('day').between(`${year}-01-01`, `${year}-12-32`).sortBy('takenAt'))
 export const randomPhoto = async () => {
   const ids = (await db.photos.toCollection().primaryKeys()) as string[]
   for (let tries = 0; tries < 10 && ids.length; tries++) {
@@ -187,7 +185,7 @@ export const allDays = async () => (await db.photos.orderBy('day').uniqueKeys())
 export const pendingCount = () => db.photos.where('status').equals('pending').count()
 export const streakNow = async () => streakFrom(await allDays())
 
-/** Photo-view scopes: "c:<album>" | "d:<YYYY-MM-DD>" (over Today) | "y:<YYYY-MM-DD>" (over Recap) | "m:<YYYY-MM>" | "s:<search>". */
+/** Photo-view scopes: "c:<album>" | "d:<YYYY-MM-DD>" (over Today) | "m:<YYYY-MM>" | "s:<search>". */
 export const scopePhotos = (scope: string) => {
   const [kind, arg] = [scope.slice(0, 1), scope.slice(2)]
   return kind === 'c' ? albumPhotos(arg as AlbumId) : kind === 'm' ? monthPhotos(arg) : kind === 's' ? searchPhotos(decodeURIComponent(arg)) : dayPhotos(arg)

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { allDays, dayKey, db, fromKey, getSetting, hiddenAlbums, longestStreak, monthLabel, monthPhotos, shiftMonth, tilt, useLive, yearPhotos, type Photo } from '../lib/db.ts'
+import { allDays, dayKey, db, fromKey, getSetting, hiddenAlbums, longestStreak, monthLabel, monthPhotos, shiftMonth, tilt, useLive, type Photo } from '../lib/db.ts'
 import { BADGES, type Stats } from '../lib/fun.ts'
 import { shareFile, toast } from '../lib/fx.ts'
 import { decode, toJpeg } from '../lib/images.ts'
@@ -91,7 +91,7 @@ export function Recap() {
       )}
       {playing && <Slideshow photos={list} onClose={() => setPlaying(false)} />}
 
-      <YearInPixels />
+      <MonthInPixels month={month} photos={list} />
       <BadgeShelf />
       <StickerBook />
     </>
@@ -136,79 +136,57 @@ function Slideshow({ photos, onClose }: { photos: Photo[]; onClose: () => void }
   )
 }
 
-const MONTH_LETTERS = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D']
+const WEEKDAYS = ['M', 'T', 'W', 'T', 'F', 'S', 'S']
 
-/** Every day of the year as a pixel, coloured by the album you photographed most that day. */
-function YearInPixels() {
-  const [year, setYear] = useState(() => dayKey().slice(0, 4))
+/** Every day of the month as a pixel, coloured by the album you photographed most that day. */
+function MonthInPixels({ month, photos }: { month: string; photos: Photo[] }) {
   const albums = useAlbums()
-  const days = useLive(async () => {
-    const byDay = new Map<string, Photo[]>()
-    for (const p of await yearPhotos(year)) byDay.set(p.day, [...(byDay.get(p.day) ?? []), p])
-    return byDay
-  }, [year])
   const today = dayKey()
-  const thisYear = today.slice(0, 4)
+  const byDay = new Map<string, Photo[]>()
+  for (const p of photos) byDay.set(p.day, [...(byDay.get(p.day) ?? []), p])
   const used = new Set<string>()
-  const pixel = (day: string) => {
-    const list = days?.get(day)
-    if (!list) return undefined
-    const n = new Map<string, number>()
-    for (const p of list) n.set(p.category, (n.get(p.category) ?? 0) + 1)
-    const top = [...n].sort((a, b) => b[1] - a[1])[0][0]
+  const first = fromKey(month)
+  const blanks = (first.getDay() + 6) % 7 // Monday-first
+  const length = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate()
+  const days = Array.from({ length }, (_, i) => {
+    const day = `${month}-${String(i + 1).padStart(2, '0')}`
+    const list = byDay.get(day)
+    if (!list) return { day, n: i + 1 }
+    const count = new Map<string, number>()
+    for (const p of list) count.set(p.category, (count.get(p.category) ?? 0) + 1)
+    const top = [...count].sort((x, y) => y[1] - x[1])[0][0]
     used.add(top)
-    return { album: albums.get(top), first: list[0], count: list.length }
-  }
-  const pad = (n: number) => String(n).padStart(2, '0')
-  const cells = Array.from({ length: 31 }, (_, d) =>
-    Array.from({ length: 12 }, (_, m) => {
-      const day = `${year}-${pad(m + 1)}-${pad(d + 1)}`
-      const real = fromKey(day).getMonth() === m // Feb 30 etc. don't exist
-      return { day, real, px: real ? pixel(day) : undefined }
-    }),
-  )
+    return { day, n: i + 1, album: albums.get(top), first: list[0], total: list.length }
+  })
 
   return (
     <section className="card relative mt-10 bg-white p-4 pt-6">
       <span className="tape bg-mint" aria-hidden />
-      <div className="mb-4 flex items-center justify-between gap-2">
-        <h2 className="heading text-2xl">🗓️ Year in pixels</h2>
-        <div className="flex items-center gap-1">
-          <button className="btn min-h-10 min-w-10 bg-white px-2" onClick={() => setYear(String(+year - 1))} aria-label="Previous year">
-            ◀
-          </button>
-          <span className="heading text-2xl">{year}</span>
-          <button className="btn min-h-10 min-w-10 bg-white px-2" onClick={() => setYear(String(+year + 1))} disabled={year >= thisYear} aria-label="Next year">
-            ▶
-          </button>
-        </div>
-      </div>
-      <div className="grid grid-cols-[1.25rem_repeat(12,1fr)] gap-[3px] text-center text-[10px] font-bold">
-        <span />
-        {MONTH_LETTERS.map((l, i) => (
-          <span key={i}>{l}</span>
+      <h2 className="heading mb-4 text-3xl">🗓️ Month in pixels</h2>
+      <div className="grid grid-cols-7 gap-1.5 text-center text-xs font-bold">
+        {WEEKDAYS.map((w, i) => (
+          <span key={i}>{w}</span>
         ))}
-        {cells.map((row, d) => [
-          <span key={`d${d}`} className="leading-4">
-            {(d + 1) % 5 === 1 ? d + 1 : ''}
-          </span>,
-          ...row.map(({ day, real, px }) =>
-            !real ? (
-              <span key={day} />
-            ) : px ? (
-              <a
-                key={day}
-                href={`#/photo/y:${day}/${px.first.id}`}
-                className="h-4 rounded-[3px] border-2 border-ink"
-                style={{ background: px.album.color }}
-                title={`${day}: ${px.count} photo${px.count > 1 ? 's' : ''}`}
-                aria-label={`${day}, ${px.count} photo${px.count > 1 ? 's' : ''}, mostly ${px.album.name}`}
-              />
-            ) : (
-              <span key={day} className={`h-4 rounded-[3px] border border-ink/20 ${day === today ? 'outline-2 outline-ink' : ''} ${day > today ? 'opacity-40' : ''}`} />
-            ),
+        {Array.from({ length: blanks }, (_, i) => (
+          <span key={`b${i}`} />
+        ))}
+        {days.map((d) =>
+          d.album ? (
+            <a
+              key={d.day}
+              href={`#/photo/m:${month}/${d.first.id}`}
+              className="grid aspect-square place-items-center rounded-lg border-3 border-ink"
+              style={{ background: d.album.color }}
+              aria-label={`${d.day}, ${d.total} photo${d.total > 1 ? 's' : ''}, mostly ${d.album.name}`}
+            >
+              {d.n}
+            </a>
+          ) : (
+            <span key={d.day} className={`grid aspect-square place-items-center rounded-lg border-2 border-ink/20 text-ink/40 ${d.day === today ? 'outline-2 outline-ink' : ''}`}>
+              {d.n}
+            </span>
           ),
-        ])}
+        )}
       </div>
       {!!used.size && (
         <ul className="mt-4 flex flex-wrap gap-x-3 gap-y-1 text-sm font-bold">
