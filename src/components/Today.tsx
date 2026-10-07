@@ -131,10 +131,10 @@ export function Today() {
           <span className="heading text-5xl text-white [-webkit-text-stroke:2px_#111] [text-shadow:3px_3px_0_#111]">SNAP!</span>
         </button>
         <div className="flex gap-3">
-          <button className="btn bg-white" onClick={() => open(gallery.current)} disabled={busy}>
+          <button data-tour="gallery" className="btn bg-white" onClick={() => open(gallery.current)} disabled={busy}>
             🖼️ From gallery
           </button>
-          <button className="btn bg-white" onClick={shuffle}>
+          <button data-tour="shuffle" className="btn bg-white" onClick={shuffle}>
             🔀 Shuffle
           </button>
         </div>

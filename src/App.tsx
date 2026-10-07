@@ -5,6 +5,7 @@ import { PhotoView } from './components/PhotoView.tsx'
 import { Recap } from './components/Recap.tsx'
 import { Settings } from './components/Settings.tsx'
 import { Today } from './components/Today.tsx'
+import { Tour } from './components/Tour.tsx'
 import { AlbumsContext, TabBar, Toaster, UpdateBanner } from './components/ui.tsx'
 import { FAVS, getSetting, hiddenAlbums, loadAlbums, setSetting, unlockedAlbums, useLive } from './lib/db.ts'
 import { sortPending } from './lib/sorter.ts'
@@ -74,6 +75,7 @@ export default function App() {
       <TabBar current={base === 'album' ? 'albums' : (base ?? '')} />
       {page === 'photo' && b && <PhotoView key={a} scope={a} id={b} />}
       <Toaster />
+      {base === '' && page !== 'photo' && <Tour />}
     </AlbumsContext.Provider>
   )
 }
