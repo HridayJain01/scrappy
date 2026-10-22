@@ -3,6 +3,7 @@ import { isModelCached, warmUp } from '../lib/clip.ts'
 import { db, getSetting, setSetting, useLive } from '../lib/db.ts'
 import { toast } from '../lib/fx.ts'
 import { DEFAULT_MODEL, testKey } from '../lib/gemini.ts'
+import { disableReminders, enableReminders } from '../lib/nudge.ts'
 import { useModelProgress } from './ui.tsx'
 
 const backup = () => import('../lib/backup.ts') // JSZip loads only when you back up
@@ -17,6 +18,8 @@ export function Settings() {
   const [persisted, setPersisted] = useState<boolean>()
   const [quota, setQuota] = useState<number>()
   const [cached, setCached] = useState<boolean>()
+  const remindHour = useLive(() => getSetting('remindHour', -1))
+  const name = useLive(() => getSetting('name', ''))
   const download = useModelProgress()
   const importer = useRef<HTMLInputElement>(null)
   const usage = useLive(async () => {
@@ -80,6 +83,14 @@ export function Settings() {
       <p className="mb-6 font-hand text-2xl">the boring-but-important page</p>
 
       <section className="card mb-7 space-y-3 bg-white p-4">
+        <h2 className="heading text-3xl">👋 You</h2>
+        <label className="block font-bold">
+          Your name
+          <input defaultValue={name} key={name} onBlur={(e) => void setSetting('name', e.target.value.trim())} placeholder="what should I call you?" autoComplete="given-name" className="field mt-1" />
+        </label>
+      </section>
+
+      <section className="card mb-7 space-y-3 bg-white p-4">
         <h2 className="heading text-3xl">🧠 Sorting</h2>
         {downloading ? (
           <p className="font-bold">Downloading my sorting brain… {Math.round(download * 100)}%</p>
@@ -136,6 +147,33 @@ export function Settings() {
           . It's stored only on this device.
         </p>
       </form>
+
+      <section className="card mb-7 space-y-3 bg-white p-4">
+        <h2 className="heading text-3xl">🔔 Daily nudge</h2>
+        <p>One cheeky reminder a day with today's challenge, only if you haven't snapped yet. Works best installed to your home screen.</p>
+        {remindHour !== undefined && remindHour >= 0 ? (
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="font-bold">
+              Nudge me after{' '}
+              <select className="field inline-block w-auto" value={remindHour} onChange={(e) => void enableReminders(+e.target.value)}>
+                {Array.from({ length: 24 }, (_, h) => (
+                  <option key={h} value={h}>{`${h % 12 || 12} ${h < 12 ? 'am' : 'pm'}`}</option>
+                ))}
+              </select>
+            </label>
+            <button className="btn bg-white" onClick={() => void disableReminders()}>
+              🔕 Turn off
+            </button>
+          </div>
+        ) : (
+          <button
+            className="btn bg-sun"
+            onClick={() => run('remind', async () => toast((await enableReminders()) ? '🔔 Deal. I’ll poke you at 7 pm' : 'Notifications are blocked. Allow them in your browser settings.'))}
+          >
+            🔔 Remind me daily
+          </button>
+        )}
+      </section>
 
       <section className="card mb-7 space-y-3 bg-white p-4">
         <h2 className="heading text-3xl">💾 Storage</h2>

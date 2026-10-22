@@ -10,6 +10,7 @@ export function Today() {
   const today = dayKey()
   const photos = useLive(() => dayPhotos(today), [today])
   const streak = useLive(streakNow)
+  const name = useLive(() => getSetting('name', ''))
   const pending = useLive(pendingCount)
   const unbacked = useLive(async () => (await db.photos.count()) - (await getSetting('backupCount', 0)))
   const flashbacks = useLive(() => Promise.all(flashbackDays(today).map(async (f) => ({ ...f, photos: await dayPhotos(f.day) }))), [today])
@@ -114,7 +115,7 @@ export function Today() {
     <>
       <header className="flex items-start justify-between gap-3">
         <div>
-          <p className="heading w-fit -rotate-2 rounded-md border-3 border-ink bg-sun px-2 pt-1 text-lg">Today</p>
+          <p className="heading w-fit -rotate-2 rounded-md border-3 border-ink bg-sun px-2 pt-1 text-lg">{name ? `Hey ${name}!` : 'Today'}</p>
           <h1 className="mt-1 font-hand text-5xl leading-none font-bold">
             {new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}
           </h1>

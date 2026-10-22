@@ -68,3 +68,17 @@ export function snapToEdge(x: number, y: number, ratio: number): [number, number
   const clamp = (v: number) => Math.max(4, Math.min(96, v))
   return edge === 0 ? [0, clamp(y)] : edge === 1 ? [100, clamp(y)] : edge === 2 ? [clamp(x), 0] : [clamp(x), 100]
 }
+
+/** The daily nudge: today's challenge, spiced up by what's at stake. Pure, so it's tested. */
+export function nudgeFor(day: string, streak: number, snappedToday: boolean, name = '') {
+  const c = challengeFor(day)
+  const title = snappedToday
+    ? `${c.emoji} Bonus round?`
+    : streak >= 3
+      ? `🔥 Your ${streak}-day streak is sweating`
+      : streak > 0
+        ? `📸 Day ${streak + 1} is waiting`
+        : `👀 Scrappy misses you${name && `, ${name}`}`
+  const body = snappedToday ? `Today's challenge: ${c.text}. Go on, one more.` : `Today's challenge: ${c.text} ${c.emoji}`
+  return { title, body }
+}

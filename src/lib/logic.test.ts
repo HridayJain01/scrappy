@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { diaryDate, flashbackDays, longestStreak, shiftMonth, streakFrom, tilt } from './db.ts'
-import { BADGES, CHALLENGES, challengeFor, snapToEdge, streakBadge } from './fun.ts'
+import { BADGES, CHALLENGES, challengeFor, nudgeFor, snapToEdge, streakBadge } from './fun.ts'
 import { parseResult } from './gemini.ts'
 
 test('streak counts back from today, or from yesterday until you snap today', () => {
@@ -157,4 +157,11 @@ test('frame stickers snap to the nearest edge', () => {
   assert.deepEqual(snapToEdge(50, 5, 0.8), [50, 0])
   assert.deepEqual(snapToEdge(50, 97, 0.8), [50, 100])
   assert.deepEqual(snapToEdge(0, 0, 0.8), [0, 4]) // corners stay on the frame
+})
+
+test('nudge raises the stakes with the streak', () => {
+  assert.match(nudgeFor('2026-10-22', 5, false).title, /5-day streak/)
+  assert.match(nudgeFor('2026-10-22', 1, false).title, /Day 2/)
+  assert.match(nudgeFor('2026-10-22', 0, false).title, /misses you/)
+  assert.match(nudgeFor('2026-10-22', 0, false).body, new RegExp(challengeFor('2026-10-22').text))
 })

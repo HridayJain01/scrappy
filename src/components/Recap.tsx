@@ -19,6 +19,8 @@ export function Recap() {
   const photos = useLive(() => monthPhotos(month), [month])
   const [busy, setBusy] = useState(false)
   const [playing, setPlaying] = useState(false)
+  const [all, setAll] = useState(false)
+  useEffect(() => setAll(false), [month])
   const list = photos ?? []
   const top = topSticker(list)
   const picks = spread(list)
@@ -71,10 +73,15 @@ export function Recap() {
               </p>
             )}
             <div className="mt-6 grid grid-cols-3 items-start gap-3">
-              {picks.map((p) => (
+              {(all ? list : picks).map((p) => (
                 <Polaroid key={p.id} photo={p} href={`#/photo/m:${month}/${p.id}`} small />
               ))}
             </div>
+            {list.length > picks.length && (
+              <button className="btn mt-5 w-full bg-white" onClick={() => setAll(!all)}>
+                {all ? 'Show fewer' : `See all ${list.length} photos`}
+              </button>
+            )}
           </>
         )}
       </article>

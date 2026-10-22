@@ -1,0 +1,14 @@
+name = "scrappy-push"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+
+[triggers]
+crons = ["0 * * * *"]
+
+[[kv_namespaces]]
+binding = "SUBS"
+id = "PASTE_KV_ID_HERE" # from: npx wrangler kv namespace create SUBS
+
+[vars]
+VAPID_SUBJECT = "mailto:you@example.com"
+# VAPID_PUBLIC_KEY and VAPID_PRIVATE_JWK are secrets: see push/README.md

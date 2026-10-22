@@ -28,6 +28,7 @@ export default defineConfig({
         ],
       },
       workbox: {
+        importScripts: ['push-sw.js'], // daily nudge pushes, see public/push-sw.js
         clientsClaim: true, // the first install controls the page right away (so it works offline without a reload)
         maximumFileSizeToCacheInBytes: 16 * 1024 ** 2, // the on-device AI's WebAssembly runtime (~14 MB, ~3.7 MB gzipped)
         runtimeCaching: [

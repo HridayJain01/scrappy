@@ -8,6 +8,7 @@ import { Today } from './components/Today.tsx'
 import { Tour } from './components/Tour.tsx'
 import { AlbumsContext, TabBar, Toaster, UpdateBanner } from './components/ui.tsx'
 import { FAVS, getSetting, hiddenAlbums, loadAlbums, setSetting, unlockedAlbums, useLive } from './lib/db.ts'
+import { startNudges } from './lib/nudge.ts'
 import { sortPending } from './lib/sorter.ts'
 
 // Routes: #/  #/albums  #/album/<id>  #/recap  #/settings  #/photo/<scope>/<photoId>
@@ -48,6 +49,7 @@ export default function App() {
     if (!onboarded) return
     void setSetting('onboarded', true) // so removing a Gemini key later never sends you back to onboarding
     void sortPending() // retry anything left unsorted last time
+    startNudges()
   }, [onboarded])
 
   if (onboarded === undefined || !albums) return null

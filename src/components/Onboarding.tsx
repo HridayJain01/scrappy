@@ -1,12 +1,15 @@
 import { warmUp } from '../lib/clip.ts'
 import { setSetting } from '../lib/db.ts'
+import { useState } from 'react'
 import { Burst } from './ui.tsx'
 
 // Only iOS Safari defines navigator.standalone (false in a browser tab, true when opened from the Home Screen).
 const iosTab = (navigator as Navigator & { standalone?: boolean }).standalone === false
 
 export function Onboarding() {
+  const [name, setName] = useState('')
   function start() {
+    void setSetting('name', name.trim())
     void warmUp() // start the one-time model download now, so the first photo sorts fast
     void setSetting('onboarded', true) // App notices and swaps this screen out
   }
@@ -32,6 +35,10 @@ export function Onboarding() {
             keep separate photo storage.
           </p>
         )}
+        <label className="block font-bold">
+          What should I call you?
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="your name (optional)" autoComplete="given-name" className="field mt-1" />
+        </label>
         <button className="btn w-full bg-sun text-xl" onClick={start}>
           Let's go! 🚀
         </button>
